@@ -351,3 +351,75 @@ def test_same_cell_workers_use_raw_uuid_order_for_harvest_contention() -> None:
 
     assert lower_id_worker.actions == [("HARVEST",)]
     assert higher_id_worker.actions != [("HARVEST",)]
+
+
+def test_damaged_unit_at_stationary_core_heals_before_idle_movement() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=1,
+        unit_type=UnitType.RANGER,
+    )
+    turn = make_turn(core=core, units=(ranger,), resources=2)
+
+    choose_actions(turn)
+
+    assert ranger.actions == [("HEAL",)]
+
+
+def test_core_repairs_shield_before_spawning_when_hp_is_full() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=4,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=6)
+
+    choose_actions(turn)
+
+    assert core.actions == [("REPAIR_SHIELD",)]
+
+
+def test_core_spawns_worker_only_with_reserve_and_cell_room() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    turn = make_turn(core=core, units=(), resources=10)
+
+    choose_actions(turn)
+
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
+
+
+def test_ground_beacon_is_picked_up_only_when_already_visible_and_idle() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    beacon = SimpleNamespace(position=(1, 0), status="GROUND", carrier_id=None)
+    turn = make_turn(core=core, units=(worker,), resources=5, beacon=beacon)
+
+    choose_actions(turn)
+
+    assert worker.actions == [("PICKUP_BEACON",)]

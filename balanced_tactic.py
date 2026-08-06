@@ -10,6 +10,14 @@ from arena_hero import ArenaHeroClient, Direction, UnitType
 
 DIRECTIONS = (Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT)
 _DIRECTION_DELTAS = {direction: direction.delta for direction in DIRECTIONS}
+CORE_RESERVE = 5
+CORE_MAX_HP = 5
+UNIT_MAX_HP = {"WORKER": 2, "VANGUARD": 4, "RANGER": 2}
+UNIT_COSTS = {
+    UnitType.WORKER: 5,
+    UnitType.VANGUARD: 10,
+    UnitType.RANGER: 12,
+}
 
 
 def _enum_name(value) -> str:
@@ -187,6 +195,14 @@ def _queue_worker_actions(
                 claimed_resources.add(worker.position)
                 acted.add(worker.id)
                 continue
+        if (
+            not threatened
+            and not worker.cargo
+            and _beacon_is_ground(turn)
+            and worker.position == getattr(turn.beacon, "position", None)
+            and worker.position not in turn.resource_cells
+        ):
+            continue
         if threatened:
             goal = core_position
             retreat = True
@@ -225,6 +241,127 @@ def _queue_worker_actions(
             planned_from_core.add(worker.id)
         if destination == core_position:
             planned_into_core.add(worker.id)
+
+
+def _beacon_is_ground(turn) -> bool:
+    return _enum_name(getattr(turn.beacon, "status", None)) == "GROUND"
+
+
+def _beacon_carrier_is_owned(turn) -> bool:
+    carrier_id = getattr(turn.beacon, "carrier_id", None)
+    if carrier_id is None:
+        return False
+    if turn.core is not None and carrier_id == turn.core.id:
+        return True
+    return any(carrier_id == unit.id for unit in turn.units)
+
+
+def _shield_cap(turn) -> int:
+    return 10 if _beacon_carrier_is_owned(turn) else 5
+
+
+def _queue_unit_heals(turn, acted: set[object], budget: int) -> int:
+    core = turn.core
+    if core is None or not _is_stationary_core(core):
+        return budget
+    for unit in sorted(turn.units, key=lambda item: _uuid_key(item.id)):
+        if unit.id in acted or unit.position != core.position:
+            continue
+        if _enum_name(getattr(unit, "unit_type", None)) == "WORKER" and getattr(unit, "cargo", 0):
+            continue
+        maximum = UNIT_MAX_HP.get(_enum_name(unit.unit_type))
+        if maximum is None or unit.hp >= maximum or budget <= 0:
+            continue
+        unit.heal()
+        acted.add(unit.id)
+        budget -= min(maximum - unit.hp, budget)
+    return budget
+
+
+def _desired_spawn_type(turn):
+    workers = sum(_enum_name(unit.unit_type) == "WORKER" for unit in turn.units)
+    rangers = sum(_enum_name(unit.unit_type) == "RANGER" for unit in turn.units)
+    vanguards = sum(_enum_name(unit.unit_type) == "VANGUARD" for unit in turn.units)
+    if workers < 3:
+        return UnitType.WORKER
+    if rangers == 0:
+        return UnitType.RANGER
+    if vanguards == 0:
+        return UnitType.VANGUARD
+    return UnitType.RANGER if rangers <= vanguards else UnitType.VANGUARD
+
+
+def _upkeep_for(population: int) -> int:
+    tier = population // 20
+    return tier * (tier + 1) // 2
+
+
+def _queue_beacon_action(turn, acted: set[object], core_action_selected: bool) -> bool:
+    if not _beacon_is_ground(turn):
+        return core_action_selected
+    beacon_position = turn.beacon.position
+    idle_units = [
+        unit
+        for unit in turn.units
+        if unit.id not in acted
+        and unit.position == beacon_position
+        and not (
+            _enum_name(unit.unit_type) == "WORKER" and getattr(unit, "cargo", 0)
+        )
+    ]
+    if idle_units:
+        unit = min(idle_units, key=lambda item: _uuid_key(item.id))
+        unit.pickup_beacon()
+        acted.add(unit.id)
+        return core_action_selected
+    core = turn.core
+    if (
+        core is not None
+        and not core_action_selected
+        and _is_stationary_core(core)
+        and core.position == beacon_position
+        and core.hp >= CORE_MAX_HP
+        and core.shield >= _shield_cap(turn)
+    ):
+        core.pickup_beacon()
+        return True
+    return core_action_selected
+
+
+def _queue_core_action(
+    turn,
+    budget: int,
+    planned_from_core: set[object],
+    planned_into_core: set[object],
+    core_action_selected: bool,
+) -> bool:
+    core = turn.core
+    if core is None or core_action_selected or not _is_stationary_core(core):
+        return core_action_selected
+    if core.hp < CORE_MAX_HP and budget > 0:
+        core.heal()
+        return True
+    if core.shield < _shield_cap(turn) and budget > 0:
+        core.repair_shield()
+        return True
+
+    population = getattr(turn.state, "population", len(turn.units))
+    unit_type = _desired_spawn_type(turn)
+    cost = UNIT_COSTS[unit_type]
+    projected_upkeep = _upkeep_for(population + 1)
+    if budget < cost + projected_upkeep + CORE_RESERVE:
+        return False
+    current_core_units = sum(unit.position == core.position for unit in turn.units)
+    post_movement_occupancy = (
+        1
+        + current_core_units
+        - len(planned_from_core)
+        + len(planned_into_core)
+    )
+    if post_movement_occupancy >= 2:
+        return False
+    core.spawn(unit_type)
+    return True
 
 
 def _queue_ranger_actions(turn, acted: set[object]) -> None:
@@ -291,7 +428,17 @@ def choose_actions(turn) -> None:
     planned_into_core: set[object] = set()
     _queue_ranger_actions(turn, acted)
     _queue_vanguard_actions(turn, acted)
+    budget = max(0, turn.resources - getattr(turn.state, "upkeep_next_tick", 0))
+    budget = _queue_unit_heals(turn, acted, budget)
     _queue_worker_actions(turn, acted, planned_from_core, planned_into_core)
+    core_action_selected = _queue_beacon_action(turn, acted, False)
+    _queue_core_action(
+        turn,
+        budget,
+        planned_from_core,
+        planned_into_core,
+        core_action_selected,
+    )
 
 
 def load_api_key() -> str:
