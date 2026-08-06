@@ -1,0 +1,576 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from uuid import UUID
+
+from arena_hero import Direction, UnitType
+
+from balanced_tactic import choose_actions, load_api_key, play
+
+
+class FakeController:
+    def __init__(
+        self,
+        *,
+        object_id: UUID,
+        position: tuple[int, int] = (0, 0),
+        hp: int = 1,
+        shield: int = 5,
+        unit_type: UnitType | None = None,
+        cargo: int = 0,
+        state: str = "NORMAL",
+    ) -> None:
+        self.id = object_id
+        self.position = position
+        self.hp = hp
+        self.shield = shield
+        self.unit_type = unit_type
+        self.cargo = cargo
+        self.view = SimpleNamespace(
+            id=object_id,
+            position=position,
+            hp=hp,
+            shield=shield,
+            unit_type=unit_type,
+            state=state,
+        )
+        self.actions: list[tuple[object, ...]] = []
+
+    def _record(self, name: str, *args: object) -> None:
+        self.actions.append((name, *args))
+
+    def move(self, direction: Direction) -> None:
+        self._record("MOVE", direction)
+
+    def harvest(self) -> None:
+        self._record("HARVEST")
+
+    def deposit(self) -> None:
+        self._record("DEPOSIT")
+
+    def heal(self) -> None:
+        self._record("HEAL")
+
+    def sweep(self, direction: Direction) -> None:
+        self._record("SWEEP", direction)
+
+    def shoot_cell(self, position: tuple[int, int]) -> None:
+        self._record("SHOOT", position)
+
+    def pickup_beacon(self) -> None:
+        self._record("PICKUP_BEACON")
+
+    def repair_shield(self) -> None:
+        self._record("REPAIR_SHIELD")
+
+    def spawn(self, unit_type: UnitType) -> None:
+        self._record("SPAWN", unit_type)
+
+
+def make_turn(
+    *,
+    core: FakeController | None,
+    units: tuple[FakeController, ...] = (),
+    resources: int = 0,
+    upkeep_next_tick: int = 0,
+    resource_cells: set[tuple[int, int]] | tuple[tuple[int, int], ...] = (),
+    obstacle_cells: set[tuple[int, int]] | tuple[tuple[int, int], ...] = (),
+    enemies: tuple[SimpleNamespace, ...] = (),
+    beacon: SimpleNamespace | None = None,
+) -> SimpleNamespace:
+    workers = tuple(unit for unit in units if unit.unit_type is UnitType.WORKER)
+    vanguards = tuple(unit for unit in units if unit.unit_type is UnitType.VANGUARD)
+    rangers = tuple(unit for unit in units if unit.unit_type is UnitType.RANGER)
+    capacity = max(10, len(units) * 5)
+    state = SimpleNamespace(
+        population=len(units),
+        upkeep_next_tick=upkeep_next_tick,
+        status="ACTIVE" if core is not None else "RESPAWNING",
+    )
+    return SimpleNamespace(
+        tick=1,
+        state=state,
+        resources=resources,
+        resource_space=max(0, capacity - resources),
+        core=core,
+        units=tuple(units),
+        workers=workers,
+        vanguards=vanguards,
+        rangers=rangers,
+        visible_enemies=tuple(enemies),
+        resource_cells=frozenset(resource_cells),
+        obstacle_cells=frozenset(obstacle_cells),
+        beacon=beacon
+        or SimpleNamespace(position=(0, 0), status=None, carrier_id=None),
+        events=(),
+    )
+
+
+def test_respawning_turn_queues_no_invented_actions() -> None:
+    turn = make_turn(core=None)
+
+    result = choose_actions(turn)
+
+    assert result is None
+    assert turn.core is None
+
+
+def test_ranger_chooses_a_legal_visible_core_cell() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(5, 5),
+        hp=5,
+    )
+    ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 3),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    enemy_core = SimpleNamespace(
+        kind="CORE",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(0, 0),
+        hp=5,
+    )
+    turn = make_turn(core=core, units=(ranger,), enemies=(enemy_core,))
+
+    choose_actions(turn)
+
+    assert ranger.actions == [("SHOOT", (0, 0))]
+
+
+def test_ranger_does_not_shoot_through_a_visible_obstacle() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(0, 3),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        enemies=(enemy,),
+        obstacle_cells={(0, 1)},
+    )
+
+    choose_actions(turn)
+
+    assert ranger.actions == []
+
+
+def test_vanguard_sweeps_the_adjacent_cell_with_most_hostiles() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    vanguard = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    enemies = (
+        SimpleNamespace(
+            kind="UNIT",
+            id=UUID("00000000-0000-0000-0000-000000000020"),
+            position=(1, 0),
+            hp=2,
+        ),
+        SimpleNamespace(
+            kind="UNIT",
+            id=UUID("00000000-0000-0000-0000-000000000021"),
+            position=(1, 0),
+            hp=1,
+        ),
+    )
+    turn = make_turn(core=core, units=(vanguard,), enemies=enemies)
+
+    choose_actions(turn)
+
+    assert vanguard.actions == [("SWEEP", Direction.RIGHT)]
+
+
+def test_worker_harvests_visible_resource_on_current_cell() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=5, resource_cells={(1, 0)})
+
+    choose_actions(turn)
+
+    assert worker.actions == [("HARVEST",)]
+
+
+def test_worker_deposits_cargo_only_at_stationary_core_with_space() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=2,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=5)
+
+    choose_actions(turn)
+
+    assert worker.actions == [("DEPOSIT",)]
+
+
+def test_worker_moves_around_visible_obstacle_toward_resource() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        resources=5,
+        resource_cells={(2, 0)},
+        obstacle_cells={(1, 0)},
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("MOVE", Direction.UP)]
+
+
+def test_worker_prefers_nearest_visible_resource_over_coordinate_order() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        resources=5,
+        resource_cells={(-5, 0), (1, 0)},
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("MOVE", Direction.RIGHT)]
+
+
+def test_threatened_worker_retreats_before_harvesting() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(2, 0),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        resources=5,
+        resource_cells={(1, 0)},
+        enemies=(enemy,),
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("MOVE", Direction.LEFT)]
+
+
+def test_same_cell_workers_use_raw_uuid_order_for_harvest_contention() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(5, 5),
+        hp=5,
+    )
+    lower_id_worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    higher_id_worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(higher_id_worker, lower_id_worker),
+        resources=5,
+        resource_cells={(1, 0)},
+    )
+
+    choose_actions(turn)
+
+    assert lower_id_worker.actions == [("HARVEST",)]
+    assert higher_id_worker.actions != [("HARVEST",)]
+
+
+def test_damaged_unit_at_stationary_core_heals_before_idle_movement() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=1,
+        unit_type=UnitType.RANGER,
+    )
+    turn = make_turn(core=core, units=(ranger,), resources=2)
+
+    choose_actions(turn)
+
+    assert ranger.actions == [("HEAL",)]
+
+
+def test_core_repairs_shield_before_spawning_when_hp_is_full() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=4,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=6)
+
+    choose_actions(turn)
+
+    assert core.actions == [("REPAIR_SHIELD",)]
+
+
+def test_core_spawns_worker_only_with_reserve_and_cell_room() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    turn = make_turn(core=core, units=(), resources=10)
+
+    choose_actions(turn)
+
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
+
+
+def test_ground_beacon_is_picked_up_only_when_already_visible_and_idle() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    beacon = SimpleNamespace(position=(1, 0), status="GROUND", carrier_id=None)
+    turn = make_turn(core=core, units=(worker,), resources=5, beacon=beacon)
+
+    choose_actions(turn)
+
+    assert worker.actions == [("PICKUP_BEACON",)]
+
+
+def test_priority_does_not_replace_worker_deposit_with_retreat() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=1,
+    )
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(1, 0),
+        hp=2,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=5, enemies=(enemy,))
+
+    choose_actions(turn)
+
+    assert worker.actions == [("DEPOSIT",)]
+
+
+def test_load_api_key_prefers_environment_without_printing(monkeypatch) -> None:
+    monkeypatch.setenv("ARENA_HERO_API_KEY", "secret-test-key")
+
+    assert load_api_key() == "secret-test-key"
+
+
+def test_load_api_key_prompts_when_environment_is_empty(monkeypatch) -> None:
+    monkeypatch.delenv("ARENA_HERO_API_KEY", raising=False)
+    monkeypatch.setattr("balanced_tactic.getpass", lambda prompt: "prompted-key")
+
+    assert load_api_key() == "prompted-key"
+
+
+def test_play_submits_one_complete_plan_for_each_turn(monkeypatch, capsys) -> None:
+    submissions: list[int] = []
+
+    class FakeTurn:
+        tick = 7
+        core = None
+
+        def submit(self):
+            submissions.append(self.tick)
+            return SimpleNamespace(tick=self.tick, accepted=True)
+
+    class FakeGame:
+        def __init__(self, *, api_key):
+            assert api_key == "provided-key"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def turns(self):
+            yield FakeTurn()
+
+    monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
+
+    play("provided-key")
+
+    assert submissions == [7]
+    assert capsys.readouterr().out == "tick=7 accepted=True\n"
+
+
+def test_core_beacon_pickup_is_not_replaced_by_production() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=5,
+    )
+    beacon = SimpleNamespace(position=(0, 0), status="GROUND", carrier_id=None)
+    turn = make_turn(core=core, units=(), resources=10, beacon=beacon)
+
+    choose_actions(turn)
+
+    assert core.actions == [("PICKUP_BEACON",)]
+
+
+def test_unit_heal_budget_is_ordered_by_raw_uuid() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    lower_id_ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=1,
+        unit_type=UnitType.RANGER,
+    )
+    higher_id_ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(0, 0),
+        hp=1,
+        unit_type=UnitType.RANGER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(higher_id_ranger, lower_id_ranger),
+        resources=1,
+    )
+
+    choose_actions(turn)
+
+    assert lower_id_ranger.actions == [("HEAL",)]
+    assert higher_id_ranger.actions == []
+
+
+def test_moving_core_does_not_receive_deposit_or_production() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=4,
+        state="MOVING",
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=1,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=10)
+
+    choose_actions(turn)
+
+    assert worker.actions == []
+    assert core.actions == []
+
+
+def test_current_upkeep_is_reserved_before_spawning() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    turn = make_turn(core=core, units=(), resources=10, upkeep_next_tick=1)
+
+    choose_actions(turn)
+
+    assert core.actions == []
