@@ -145,6 +145,12 @@ cd D:\arena-hero
 python -m pytest -q
 ~~~
 
+如果终端提示找不到 pytest，只为本地测试安装它：
+
+~~~powershell
+python -m pip install pytest
+~~~
+
 当前测试覆盖 22 个行为场景，包括：
 
 - Ranger 射击范围、对齐和障碍判断。
@@ -164,6 +170,13 @@ git diff --check
 ## 上传到 GitHub
 
 本项目的远程仓库是 [Hurrvey/arena-hero-agent](https://github.com/Hurrvey/arena-hero-agent)。
+
+如果命令行尚未登录 GitHub，可以先使用 GitHub CLI 完成登录和 Git 凭据配置：
+
+~~~powershell
+gh auth login
+gh auth setup-git
+~~~
 
 如果本地已经绑定 origin，修改文档或代码后执行：
 
