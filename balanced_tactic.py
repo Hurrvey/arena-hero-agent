@@ -446,4 +446,18 @@ def load_api_key() -> str:
 
 
 def play(api_key: str | None = None) -> None:
-    raise NotImplementedError
+    try:
+        key = api_key or load_api_key()
+        with ArenaHeroClient(api_key=key) as game:
+            for turn in game.turns():
+                choose_actions(turn)
+                accepted = turn.submit()
+                print(f"tick={accepted.tick} accepted={accepted.accepted}")
+    except KeyboardInterrupt:
+        return
+    except Exception as exc:
+        raise SystemExit(f"Arena Hero stopped: {type(exc).__name__}") from None
+
+
+if __name__ == "__main__":
+    play()

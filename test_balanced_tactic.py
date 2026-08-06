@@ -5,7 +5,7 @@ from uuid import UUID
 
 from arena_hero import Direction, UnitType
 
-from balanced_tactic import choose_actions
+from balanced_tactic import choose_actions, load_api_key, play
 
 
 class FakeController:
@@ -423,3 +423,154 @@ def test_ground_beacon_is_picked_up_only_when_already_visible_and_idle() -> None
     choose_actions(turn)
 
     assert worker.actions == [("PICKUP_BEACON",)]
+
+
+def test_priority_does_not_replace_worker_deposit_with_retreat() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=1,
+    )
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(1, 0),
+        hp=2,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=5, enemies=(enemy,))
+
+    choose_actions(turn)
+
+    assert worker.actions == [("DEPOSIT",)]
+
+
+def test_load_api_key_prefers_environment_without_printing(monkeypatch) -> None:
+    monkeypatch.setenv("ARENA_HERO_API_KEY", "secret-test-key")
+
+    assert load_api_key() == "secret-test-key"
+
+
+def test_load_api_key_prompts_when_environment_is_empty(monkeypatch) -> None:
+    monkeypatch.delenv("ARENA_HERO_API_KEY", raising=False)
+    monkeypatch.setattr("balanced_tactic.getpass", lambda prompt: "prompted-key")
+
+    assert load_api_key() == "prompted-key"
+
+
+def test_play_submits_one_complete_plan_for_each_turn(monkeypatch, capsys) -> None:
+    submissions: list[int] = []
+
+    class FakeTurn:
+        tick = 7
+        core = None
+
+        def submit(self):
+            submissions.append(self.tick)
+            return SimpleNamespace(tick=self.tick, accepted=True)
+
+    class FakeGame:
+        def __init__(self, *, api_key):
+            assert api_key == "provided-key"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def turns(self):
+            yield FakeTurn()
+
+    monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
+
+    play("provided-key")
+
+    assert submissions == [7]
+    assert capsys.readouterr().out == "tick=7 accepted=True\n"
+
+
+def test_core_beacon_pickup_is_not_replaced_by_production() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=5,
+    )
+    beacon = SimpleNamespace(position=(0, 0), status="GROUND", carrier_id=None)
+    turn = make_turn(core=core, units=(), resources=10, beacon=beacon)
+
+    choose_actions(turn)
+
+    assert core.actions == [("PICKUP_BEACON",)]
+
+
+def test_unit_heal_budget_is_ordered_by_raw_uuid() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    lower_id_ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=1,
+        unit_type=UnitType.RANGER,
+    )
+    higher_id_ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(0, 0),
+        hp=1,
+        unit_type=UnitType.RANGER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(higher_id_ranger, lower_id_ranger),
+        resources=1,
+    )
+
+    choose_actions(turn)
+
+    assert lower_id_ranger.actions == [("HEAL",)]
+    assert higher_id_ranger.actions == []
+
+
+def test_moving_core_does_not_receive_deposit_or_production() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=4,
+        state="MOVING",
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=1,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=10)
+
+    choose_actions(turn)
+
+    assert worker.actions == []
+    assert core.actions == []
+
+
+def test_current_upkeep_is_reserved_before_spawning() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    turn = make_turn(core=core, units=(), resources=10, upkeep_next_tick=1)
+
+    choose_actions(turn)
+
+    assert core.actions == []
