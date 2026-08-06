@@ -106,20 +106,20 @@
       def spawn(self, unit_type): self._record("SPAWN", unit_type)
 
 
-  def make_turn(*, core, units=(), resources=0, resource_cells=(), obstacle_cells=(), enemies=(), beacon=None):
+  def make_turn(*, core, units=(), resources=0, upkeep_next_tick=0, resource_cells=(), obstacle_cells=(), enemies=(), beacon=None):
       workers = tuple(u for u in units if u.unit_type is UnitType.WORKER)
       vanguards = tuple(u for u in units if u.unit_type is UnitType.VANGUARD)
       rangers = tuple(u for u in units if u.unit_type is UnitType.RANGER)
       state = SimpleNamespace(
           population=len(units),
-          upkeep_next_tick=0,
+          upkeep_next_tick=upkeep_next_tick,
           status="ACTIVE" if core is not None else "RESPAWNING",
       )
       return SimpleNamespace(
           tick=1,
           state=state,
           resources=resources,
-          resource_space=max(0, 10 - resources),
+          resource_space=max(0, max(10, len(units) * 5) - resources),
           core=core,
           units=tuple(units),
           workers=workers,
@@ -392,7 +392,7 @@
           yield index, direction, destination, other_count
   ```
 
-  Assign visible resource cells in sorted `(distance, x, y)` order, skipping cells already assigned to another Worker. A cargo Worker targets the Core; an empty Worker on a current resource cell harvests; a Worker within Manhattan distance 2 of any visible enemy retreats toward the Core. For a retreating Worker, choose the candidate with greatest distance from the nearest visible enemy first, then greatest progress toward the Core, then lowest occupancy count, then the fixed direction index. For a non-threatened Worker, choose greatest progress toward its resource/Core goal first, then greatest distance from visible enemies, then lowest occupancy count, then the fixed direction index. Do not persist a resource target after the Turn ends.
+  Sort Workers by raw UUID bytes before assigning goals. Assign visible resource cells in sorted `(distance, x, y)` order, skipping cells already assigned to another Worker. A cargo Worker targets the Core; an empty Worker on a current resource cell harvests; a Worker within Manhattan distance 2 of any visible enemy retreats toward the Core. For a retreating Worker, choose the candidate with greatest distance from the nearest visible enemy first, then greatest progress toward the Core, then lowest occupancy count, then the fixed direction index. For a non-threatened Worker, choose greatest progress toward its resource/Core goal first, then greatest distance from visible enemies, then lowest occupancy count, then the fixed direction index. Do not persist a resource target after the Turn ends.
 
 - [ ] **Step 4: Run focused Worker tests and commit.**
 
@@ -450,8 +450,7 @@
 
   def test_core_spawns_worker_only_with_reserve_and_cell_room():
       core = FakeController(object_id=UUID("00000000-0000-0000-0000-000000000010"), position=(0, 0), hp=5)
-      worker = FakeController(object_id=UUID("00000000-0000-0000-0000-000000000001"), position=(1, 0), hp=2, unit_type=UnitType.WORKER)
-      turn = make_turn(core=core, units=(worker,), resources=10)
+      turn = make_turn(core=core, units=(), resources=10)
 
       choose_actions(turn)
 
@@ -485,6 +484,8 @@
 
   ```python
   CORE_RESERVE = 5
+  CORE_MAX_HP = 5
+  UNIT_MAX_HP = {"WORKER": 2, "VANGUARD": 4, "RANGER": 2}
 
 
   def _upkeep_for(population: int) -> int:
@@ -505,7 +506,7 @@
       return UnitType.RANGER if rangers <= vanguards else UnitType.VANGUARD
   ```
 
-  Queue eligible non-cargo damaged Units at the stationary Core in raw UUID order, decrementing a local resource budget by `min(missing_hp, budget)` per queued Unit. Then queue Core `HEAL` if HP is below 5 and budget remains; otherwise queue `REPAIR_SHIELD` if shield is below its current cap and budget remains; otherwise compute the candidate spawn cost (Worker 5, Vanguard 10, Ranger 12), projected upkeep after the spawn, and require `turn.resources >= cost + projected_upkeep + CORE_RESERVE`. Require a stationary Core and fewer than two current occupants on its cell after accounting for units already queued to move away. Never queue Core actions while `core.view.state` is `MOVING`.
+  Set the initial local budget to `max(0, turn.resources - turn.state.upkeep_next_tick)`. Derive each Unit's missing HP from `UNIT_MAX_HP[_enum_name(unit.unit_type)] - unit.hp` and use `CORE_MAX_HP - core.hp` for the Core. Queue eligible non-cargo damaged Units at the stationary Core in raw UUID order, decrementing that budget by `min(missing_hp, budget)` per queued Unit. Then queue Core `HEAL` if HP is below `CORE_MAX_HP` and budget remains; otherwise queue `REPAIR_SHIELD` if shield is below its current cap and budget remains. The current shield cap is 10 only when the current Turn proves that this player's Core or Unit carries the Beacon; otherwise it is 5. If neither recovery action is selected, compute the candidate spawn cost (Worker 5, Vanguard 10, Ranger 12), projected upkeep after the spawn, and require `max(0, turn.resources - turn.state.upkeep_next_tick) >= cost + projected_upkeep + CORE_RESERVE`. Require a stationary Core and post-movement Core-cell occupancy (including the Core itself) below 2; account for units already queued to move away and do not count a Worker merely moving toward the Core unless its destination is the Core cell. Never queue Core actions while `core.view.state` is `MOVING`.
 
   For Beacon pickup, inspect only `turn.beacon.status`; accept `GROUND` and reject absent/unknown status. Choose an unacted controlled object already on `turn.beacon.position`, preferring a stationary Core only if no Core recovery action is needed, then the lowest UUID idle Unit. Do not move toward an unseen Beacon.
 
