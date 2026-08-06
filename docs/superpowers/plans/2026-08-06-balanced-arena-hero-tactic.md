@@ -392,7 +392,7 @@
           yield index, direction, destination, other_count
   ```
 
-  Assign visible resource cells in sorted `(distance, x, y)` order, skipping cells already assigned to another Worker. A cargo Worker targets the Core; an empty Worker on a current resource cell harvests; a Worker within Manhattan distance 2 of any visible enemy retreats toward the Core. For each remaining Worker, choose the candidate with the greatest distance reduction to its goal, then greatest distance from visible enemies, then lowest occupancy count, then the fixed direction index. Do not persist a resource target after the Turn ends.
+  Assign visible resource cells in sorted `(distance, x, y)` order, skipping cells already assigned to another Worker. A cargo Worker targets the Core; an empty Worker on a current resource cell harvests; a Worker within Manhattan distance 2 of any visible enemy retreats toward the Core. For a retreating Worker, choose the candidate with greatest distance from the nearest visible enemy first, then greatest progress toward the Core, then lowest occupancy count, then the fixed direction index. For a non-threatened Worker, choose greatest progress toward its resource/Core goal first, then greatest distance from visible enemies, then lowest occupancy count, then the fixed direction index. Do not persist a resource target after the Turn ends.
 
 - [ ] **Step 4: Run focused Worker tests and commit.**
 
