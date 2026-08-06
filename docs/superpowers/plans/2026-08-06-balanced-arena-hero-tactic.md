@@ -79,12 +79,14 @@
           self.id = object_id
           self.position = position
           self.hp = hp
+          self.shield = 5
           self.unit_type = unit_type
           self.cargo = cargo
           self.view = SimpleNamespace(
               id=object_id,
               position=position,
               hp=hp,
+              shield=5,
               unit_type=unit_type,
               state="NORMAL",
           )
@@ -539,15 +541,15 @@
   Add:
 
   ```python
-  def test_each_object_receives_at_most_one_action():
+  def test_priority_does_not_replace_worker_deposit_with_retreat():
       core = FakeController(object_id=UUID("00000000-0000-0000-0000-000000000010"), position=(0, 0), hp=5)
-      worker = FakeController(object_id=UUID("00000000-0000-0000-0000-000000000001"), position=(1, 0), hp=2, unit_type=UnitType.WORKER)
-      turn = make_turn(core=core, units=(worker,), resources=5, resource_cells={(1, 0)})
+      worker = FakeController(object_id=UUID("00000000-0000-0000-0000-000000000001"), position=(0, 0), hp=2, unit_type=UnitType.WORKER, cargo=1)
+      enemy = SimpleNamespace(kind="UNIT", id=UUID("00000000-0000-0000-0000-000000000020"), position=(1, 0), hp=2)
+      turn = make_turn(core=core, units=(worker,), resources=5, enemies=(enemy,))
 
       choose_actions(turn)
 
-      assert len(worker.actions) <= 1
-      assert len(core.actions) <= 1
+      assert worker.actions == [("DEPOSIT",)]
 
 
   def test_load_api_key_prefers_environment_without_printing(monkeypatch):
@@ -572,10 +574,10 @@
   Run:
 
   ```powershell
-  python -m pytest test_balanced_tactic.py -k "at_most_one or load_api_key" -q
+  python -m pytest test_balanced_tactic.py -k "priority_does_not_replace or load_api_key" -q
   ```
 
-  Expected: the action-count test may pass incidentally once earlier tasks are complete; the credential tests must fail until `load_api_key` is wired into the final module. If a test passes before its intended implementation, strengthen its assertion before continuing.
+  Expected: the priority test fails until the complete composition order is wired; the credential tests fail until `load_api_key` is wired into the final module.
 
 - [ ] **Step 3: Compose priorities and implement the SDK loop.**
 
