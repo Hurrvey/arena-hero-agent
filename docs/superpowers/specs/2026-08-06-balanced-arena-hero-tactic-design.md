@@ -46,7 +46,11 @@ the official SDK already implements.
 
 `choose_actions(turn)` evaluates the current Turn once and queues at most one
 action per controlled object. Decisions are deterministic, including target and
-direction tie-breaks.
+direction tie-breaks. The effective priority order is fixed: lifecycle, legal
+combat, Worker retreat, Unit healing, Worker deposit/harvest, visible Beacon
+pickup, goal-directed movement, then the Core action (recovery, repair, or
+production). A lower-priority step never replaces an action already selected
+for that object.
 
 1. **Lifecycle**
    - If `turn.core` is absent, queue no invented actions and allow an empty plan
@@ -67,12 +71,19 @@ direction tie-breaks.
 
 3. **Healing and Core recovery**
    - A damaged controlled Unit may heal only when already sharing the stationary
-     Core cell. Unit healing consumes that Unit's full action.
-   - Reserve current resources deterministically for queued Unit heals in raw
-     UUID order before considering the Core action.
-   - A damaged Core heals before shield repair or production when the expected
-     remaining resources can restore HP. Otherwise repair a missing shield when
-     appropriate and affordable.
+     Core cell. Unit healing consumes that Unit's full action. Combat and
+     Worker cargo conversion take precedence for the same object; a cargo-carrying
+     Worker deposits rather than trying to heal in that Tick.
+   - Use only resources visible at the start of the Turn for the healing budget.
+     Queue eligible Unit heals in ascending raw UUID order, one HP budget unit
+     at a time, up to the current Core balance; do not assume a future deposit
+     or captured loot will fund a decision. This makes competing heals
+     deterministic even though the server may resolve a queued heal partially.
+   - After that budget is reserved, a damaged Core queues `HEAL` when at least
+     one resource remains. If the Core is full HP, queue `REPAIR_SHIELD` when a
+     shield point is missing, the current shield cap permits repair, and at
+     least one resource remains. Core healing/repair is never queued while the
+     Core is migrating.
    - Healing is still subject to same-Tick combat and resource changes; dynamic
      failure is accepted as safe and cost-free.
 
@@ -100,9 +111,12 @@ direction tie-breaks.
      directions.
    - Reject currently visible obstacle cells, signed-int64 overflow, and moves
      that would obviously exceed friendly cell capacity.
-   - Score remaining directions by Manhattan distance to the selected goal,
-     visible hostile danger, friendly destination contention, and fixed
-     direction order.
+   - For a retreat goal, score candidates by (visible-enemy distance descending,
+     Core distance ascending, occupancy penalty, fixed direction order). For a
+     resource goal, score by (Core/goal distance progress descending, visible
+     enemy distance descending, occupancy penalty, fixed direction order). Reject
+     a candidate containing a visible hostile or a currently visible obstacle;
+     unknown fog cells remain possible but are treated as unverified.
    - Unknown fog cells are not treated as guaranteed clear; a failed move is
      learned only through the next authoritative Turn and events.
 
@@ -110,8 +124,10 @@ direction tie-breaks.
    - Spawn only from a stationary Core with an available cell slot and enough
      resources after planned healing/recovery.
    - Keep population below the first upkeep threshold during the starter phase;
-     do not grow into population 20+ unless the Core can sustain the next upkeep
-     and retain a safety reserve.
+     do not grow into population 20+ unless the Core can sustain the projected
+     next-Tick upkeep and retain a safety reserve. The projected upkeep is
+     `tier * (tier + 1) // 2` for `tier = (population + 1) // 20` after the
+     candidate spawn.
    - Establish a small economic base first, then maintain a mixed force. Prefer
      Workers until there are three, then fill missing combat roles with Rangers
      and Vanguards using a deterministic ratio and affordability checks.
@@ -131,8 +147,9 @@ direction tie-breaks.
 - Log only Tick number and accepted status after submission; do not log state
   payloads or credentials.
 - Allow `Ctrl-C` to stop cleanly through the client context manager.
-- Terminal authentication, policy, protocol, and configuration exceptions are
-  not weakened or bypassed.
+- Catch `KeyboardInterrupt` only to close quietly. Terminal authentication,
+  policy, protocol, and configuration exceptions are allowed to surface with a
+  short non-secret error message; they are not weakened or bypassed.
 - A protocol/model mismatch requires upgrading to a compatible official PyPI
   release; the tactic will not patch SDK validation or recreate the client.
 
@@ -171,4 +188,3 @@ will be made unless separately requested and a credential is available.
 - Offline tests cover the critical rule boundaries and pass without a network
   connection or API key.
 - Source files and logs contain no credentials.
-
