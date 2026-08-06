@@ -69,6 +69,164 @@ def _direction_to_adjacent(
     return None
 
 
+def _is_stationary_core(core) -> bool:
+    state = getattr(getattr(core, "view", None), "state", None)
+    if state is None:
+        state = getattr(core, "state", "NORMAL")
+    return _enum_name(state) == "NORMAL"
+
+
+def _nearest_enemy_distance(position: tuple[int, int], enemies) -> int:
+    distances = [_distance(position, enemy.position) for enemy in enemies]
+    return min(distances, default=10**9)
+
+
+def _step(position: tuple[int, int], direction: Direction) -> tuple[int, int] | None:
+    dx, dy = _DIRECTION_DELTAS[direction]
+    candidate = (position[0] + dx, position[1] + dy)
+    if not all(-2**63 <= coordinate <= 2**63 - 1 for coordinate in candidate):
+        return None
+    return candidate
+
+
+def _candidate_steps(
+    unit,
+    turn,
+    occupied: tuple[tuple[object, tuple[int, int]], ...],
+    reserved_destinations: set[tuple[int, int]],
+):
+    enemy_cells = {enemy.position for enemy in turn.visible_enemies}
+    for index, direction in enumerate(DIRECTIONS):
+        destination = _step(unit.position, direction)
+        if (
+            destination is None
+            or destination in turn.obstacle_cells
+            or destination in enemy_cells
+            or destination in reserved_destinations
+        ):
+            continue
+        other_count = sum(
+            position == destination
+            for object_id, position in occupied
+            if object_id != unit.id
+        )
+        if other_count >= 2:
+            continue
+        yield index, direction, destination, other_count
+
+
+def _move_to_goal(
+    unit,
+    goal: tuple[int, int],
+    turn,
+    occupied: tuple[tuple[object, tuple[int, int]], ...],
+    reserved_destinations: set[tuple[int, int]],
+    *,
+    retreat: bool,
+) -> tuple[Direction, tuple[int, int]] | None:
+    if unit.position == goal:
+        return None
+    current_distance = _distance(unit.position, goal)
+    candidates = []
+    for index, direction, destination, occupancy in _candidate_steps(
+        unit, turn, occupied, reserved_destinations
+    ):
+        progress = current_distance - _distance(destination, goal)
+        enemy_distance = _nearest_enemy_distance(destination, turn.visible_enemies)
+        if retreat:
+            rank = (-enemy_distance, -progress, occupancy, index)
+        else:
+            rank = (-progress, -enemy_distance, occupancy, index)
+        candidates.append((rank, direction, destination))
+    if not candidates:
+        return None
+    _, direction, destination = min(candidates, key=lambda item: item[0])
+    return direction, destination
+
+
+def _queue_worker_actions(
+    turn,
+    acted: set[object],
+    planned_from_core: set[object],
+    planned_into_core: set[object],
+) -> None:
+    core = turn.core
+    core_position = core.position
+    stationary_core = _is_stationary_core(core)
+    occupied = tuple(
+        [(core.id, core.position)]
+        + [(unit.id, unit.position) for unit in turn.units]
+    )
+    reserved_destinations: set[tuple[int, int]] = set()
+    claimed_resources: set[tuple[int, int]] = set()
+    resources = tuple(turn.resource_cells)
+
+    for worker in sorted(turn.workers, key=lambda unit: _uuid_key(unit.id)):
+        if worker.id in acted:
+            continue
+        if (
+            worker.cargo
+            and stationary_core
+            and worker.position == core_position
+            and turn.resource_space > 0
+        ):
+            worker.deposit()
+            acted.add(worker.id)
+            continue
+
+        threatened = _nearest_enemy_distance(worker.position, turn.visible_enemies) <= 2
+        goal: tuple[int, int] | None = None
+        retreat = False
+        if (
+            not threatened
+            and not worker.cargo
+            and worker.position in turn.resource_cells
+        ):
+            if worker.position not in claimed_resources:
+                worker.harvest()
+                claimed_resources.add(worker.position)
+                acted.add(worker.id)
+                continue
+        if threatened:
+            goal = core_position
+            retreat = True
+        elif worker.cargo:
+            goal = core_position
+        else:
+            for resource_cell in sorted(
+                resources,
+                key=lambda cell: (
+                    _distance(worker.position, cell),
+                    cell[0],
+                    cell[1],
+                ),
+            ):
+                if resource_cell not in claimed_resources:
+                    goal = resource_cell
+                    break
+            if goal is None:
+                goal = core_position
+
+        movement = _move_to_goal(
+            worker,
+            goal,
+            turn,
+            occupied,
+            reserved_destinations,
+            retreat=retreat,
+        )
+        if movement is None:
+            continue
+        direction, destination = movement
+        worker.move(direction)
+        acted.add(worker.id)
+        reserved_destinations.add(destination)
+        if worker.position == core_position:
+            planned_from_core.add(worker.id)
+        if destination == core_position:
+            planned_into_core.add(worker.id)
+
+
 def _queue_ranger_actions(turn, acted: set[object]) -> None:
     for ranger in sorted(turn.rangers, key=lambda unit: _uuid_key(unit.id)):
         if ranger.id in acted:
@@ -129,8 +287,11 @@ def choose_actions(turn) -> None:
     if turn.core is None:
         return None
     acted: set[object] = set()
+    planned_from_core: set[object] = set()
+    planned_into_core: set[object] = set()
     _queue_ranger_actions(turn, acted)
     _queue_vanguard_actions(turn, acted)
+    _queue_worker_actions(turn, acted, planned_from_core, planned_into_core)
 
 
 def load_api_key() -> str:

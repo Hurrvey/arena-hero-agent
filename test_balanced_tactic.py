@@ -201,3 +201,153 @@ def test_vanguard_sweeps_the_adjacent_cell_with_most_hostiles() -> None:
     choose_actions(turn)
 
     assert vanguard.actions == [("SWEEP", Direction.RIGHT)]
+
+
+def test_worker_harvests_visible_resource_on_current_cell() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=5, resource_cells={(1, 0)})
+
+    choose_actions(turn)
+
+    assert worker.actions == [("HARVEST",)]
+
+
+def test_worker_deposits_cargo_only_at_stationary_core_with_space() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=2,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=5)
+
+    choose_actions(turn)
+
+    assert worker.actions == [("DEPOSIT",)]
+
+
+def test_worker_moves_around_visible_obstacle_toward_resource() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        resources=5,
+        resource_cells={(2, 0)},
+        obstacle_cells={(1, 0)},
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("MOVE", Direction.UP)]
+
+
+def test_worker_prefers_nearest_visible_resource_over_coordinate_order() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        resources=5,
+        resource_cells={(-5, 0), (1, 0)},
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("MOVE", Direction.RIGHT)]
+
+
+def test_threatened_worker_retreats_before_harvesting() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(2, 0),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        resources=5,
+        resource_cells={(1, 0)},
+        enemies=(enemy,),
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("MOVE", Direction.LEFT)]
+
+
+def test_same_cell_workers_use_raw_uuid_order_for_harvest_contention() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(5, 5),
+        hp=5,
+    )
+    lower_id_worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    higher_id_worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(higher_id_worker, lower_id_worker),
+        resources=5,
+        resource_cells={(1, 0)},
+    )
+
+    choose_actions(turn)
+
+    assert lower_id_worker.actions == [("HARVEST",)]
+    assert higher_id_worker.actions != [("HARVEST",)]
