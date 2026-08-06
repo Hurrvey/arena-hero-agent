@@ -113,3 +113,91 @@ def test_respawning_turn_queues_no_invented_actions() -> None:
 
     assert result is None
     assert turn.core is None
+
+
+def test_ranger_chooses_a_legal_visible_core_cell() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(5, 5),
+        hp=5,
+    )
+    ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 3),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    enemy_core = SimpleNamespace(
+        kind="CORE",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(0, 0),
+        hp=5,
+    )
+    turn = make_turn(core=core, units=(ranger,), enemies=(enemy_core,))
+
+    choose_actions(turn)
+
+    assert ranger.actions == [("SHOOT", (0, 0))]
+
+
+def test_ranger_does_not_shoot_through_a_visible_obstacle() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    ranger = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(0, 3),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        enemies=(enemy,),
+        obstacle_cells={(0, 1)},
+    )
+
+    choose_actions(turn)
+
+    assert ranger.actions == []
+
+
+def test_vanguard_sweeps_the_adjacent_cell_with_most_hostiles() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+    )
+    vanguard = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    enemies = (
+        SimpleNamespace(
+            kind="UNIT",
+            id=UUID("00000000-0000-0000-0000-000000000020"),
+            position=(1, 0),
+            hp=2,
+        ),
+        SimpleNamespace(
+            kind="UNIT",
+            id=UUID("00000000-0000-0000-0000-000000000021"),
+            position=(1, 0),
+            hp=1,
+        ),
+    )
+    turn = make_turn(core=core, units=(vanguard,), enemies=enemies)
+
+    choose_actions(turn)
+
+    assert vanguard.actions == [("SWEEP", Direction.RIGHT)]
