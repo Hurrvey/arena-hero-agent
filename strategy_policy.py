@@ -44,6 +44,9 @@ class StrategyProfile:
     carrier_safety_margin: int = 0
     spawn_aggression: float = 0.5
 
+    def __post_init__(self) -> None:
+        self.validate()
+
     @classmethod
     def default(cls) -> "StrategyProfile":
         return cls()
@@ -52,6 +55,8 @@ class StrategyProfile:
     def from_mapping(cls, mapping: Mapping[str, object]) -> "StrategyProfile":
         if not isinstance(mapping, Mapping):
             raise ValueError("profile must be a mapping")
+        if any(not isinstance(key, str) for key in mapping):
+            raise ValueError("profile field names must be strings")
         unknown = set(mapping) - set(_DEFAULTS)
         if unknown:
             raise ValueError(f"unknown profile fields: {sorted(unknown)!r}")
@@ -115,9 +120,4 @@ def internal_score(metrics: Mapping[str, float]) -> float:
         if not math.isfinite(float(value)):
             raise ValueError(f"metric {name} must be finite")
         total += float(value) * weight
-    # Preserve a deterministic ordering when a Beacon contribution exactly
-    # ties an otherwise equal economy contribution (for example 2 ticks vs.
-    # 20 harvested resources), without changing the stated integer weights.
-    if float(metrics.get("beacon_ticks", 0.0)) > 0:
-        total += 1e-9
     return total

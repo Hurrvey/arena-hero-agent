@@ -23,7 +23,7 @@ def test_profile_round_trips_as_json_safe_mapping():
 
 
 def test_internal_score_keeps_beacon_and_survival_separate_from_economy():
-    beacon = internal_score({"beacon_ticks": 2})
+    beacon = internal_score({"beacon_ticks": 3})
     economy = internal_score({"resources_harvested": 20})
     assert beacon > economy
 
@@ -50,3 +50,19 @@ def test_internal_score_applies_all_metric_weights():
         "failed_actions": 2,
     }
     assert internal_score(metrics) == pytest.approx(10 + 2 + 3 + 4 + 5 + 20 - 8 - 100 - 1)
+
+
+def test_direct_constructor_validates_invariants():
+    with pytest.raises(ValueError):
+        StrategyProfile(beacon_priority=2.0)
+    with pytest.raises(ValueError):
+        StrategyProfile(worker_target=True)
+
+
+def test_profile_rejects_non_string_mapping_keys_without_sorting_error():
+    with pytest.raises(ValueError):
+        StrategyProfile.from_mapping({"unexpected": 1, 7: 2})
+
+
+def test_internal_score_uses_exact_beacon_weight_without_tiebreaker():
+    assert internal_score({"beacon_ticks": 2}) == 20.0
