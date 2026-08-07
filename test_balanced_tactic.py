@@ -17,6 +17,7 @@ from balanced_tactic import (
     load_api_key,
     play,
 )
+from strategy_policy import StrategyProfile
 
 
 class FakeController:
@@ -571,6 +572,88 @@ def test_play_submits_one_complete_plan_for_each_turn(monkeypatch, capsys) -> No
     monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
 
     play("provided-key")
+
+    assert submissions == [7]
+    assert capsys.readouterr().out == "tick=7 accepted=True\n"
+
+
+def test_profile_worker_target_changes_spawn_preference() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0), hp=5, shield=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(3, 3), hp=2, unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(core=core, units=(worker,), resources=10, population=2)
+    memory = TacticMemory(policy=StrategyProfile.default().with_updates(worker_target=3))
+
+    choose_actions(turn, memory)
+
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
+
+
+def test_profile_carrier_margin_requires_a_safer_retreat() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0), hp=5, shield=5,
+    )
+    carrier = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0), hp=2, unit_type=UnitType.WORKER,
+    )
+    enemy = SimpleNamespace(kind="UNIT", unit_type=UnitType.RANGER,
+                            id=UUID("00000000-0000-0000-0000-000000000020"),
+                            position=(0, 3), hp=2)
+    turn = make_turn(
+        core=core, units=(carrier,), enemies=(enemy,),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=carrier.id),
+    )
+    memory = TacticMemory(policy=StrategyProfile.default().with_updates(carrier_safety_margin=1))
+
+    choose_actions(turn, memory)
+
+    assert carrier.actions or core.actions
+
+
+def test_play_without_adaptive_coordinator_keeps_one_submission(monkeypatch, capsys) -> None:
+    submissions = []
+
+    class FakeTurn:
+        tick = 7
+        core = None
+
+        def submit(self):
+            submissions.append(self.tick)
+            return SimpleNamespace(tick=self.tick, accepted=True)
+
+    class FakeGame:
+        def __init__(self, *, api_key):
+            assert api_key == "provided-key"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def turns(self):
+            yield FakeTurn()
+
+    class DisabledCoordinator:
+        def current_profile(self):
+            return StrategyProfile.default()
+
+        def observe(self, turn, accepted):
+            return None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
+
+    play("provided-key", adaptive=DisabledCoordinator())
 
     assert submissions == [7]
     assert capsys.readouterr().out == "tick=7 accepted=True\n"

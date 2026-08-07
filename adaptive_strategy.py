@@ -542,6 +542,54 @@ class AdaptiveCoordinator:
         self._closed = False
         self._load_state()
 
+    @classmethod
+    def from_env(cls):
+        """Build an opt-in coordinator, or a zero-cost disabled observer.
+
+        Arena Hero's game credential is intentionally not reused for the LLM.
+        Missing or malformed adaptive settings fail closed so the deterministic
+        planner remains usable in ordinary CLI sessions.
+        """
+
+        enabled = os.environ.get("ARENA_HERO_ADAPTIVE", "").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        llm_key = os.environ.get("ARENA_HERO_LLM_API_KEY", "").strip()
+        evaluator = os.environ.get("ARENA_HERO_EVALUATOR_MODEL", "").strip()
+        designer = os.environ.get("ARENA_HERO_DESIGNER_MODEL", "").strip()
+        if not enabled or not llm_key or not evaluator or not designer:
+            return DisabledAdaptiveCoordinator()
+
+        def _number(name: str, default: float) -> float:
+            try:
+                value = float(os.environ.get(name, str(default)))
+                return value if math.isfinite(value) else default
+            except (TypeError, ValueError):
+                return default
+
+        def _integer(name: str, default: int) -> int:
+            try:
+                return max(1, int(os.environ.get(name, str(default))))
+            except (TypeError, ValueError):
+                return default
+
+        auto_apply = os.environ.get("ARENA_HERO_ADAPTIVE_AUTO_APPLY", "1").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        return cls(
+            transport=OpenAICompatibleTransport(
+                os.environ.get("ARENA_HERO_LLM_BASE_URL", "https://api.openai.com/v1"),
+                llm_key,
+            ),
+            state_dir=os.environ.get("ARENA_HERO_ADAPTIVE_STATE_DIR", ".codex_tmp/adaptive"),
+            interval_ticks=_integer("ARENA_HERO_ADAPTIVE_INTERVAL_TICKS", 60),
+            min_seconds=max(0.0, _number("ARENA_HERO_ADAPTIVE_MIN_SECONDS", 900.0)),
+            evaluator_model=evaluator,
+            designer_model=designer,
+            auto_apply=auto_apply,
+            rollback_ratio=max(0.0, min(1.0, _number("ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO", 0.15))),
+        )
+
     def _state_path(self) -> Path:
         return self.state_dir / "state.json"
 
@@ -668,8 +716,25 @@ class AdaptiveCoordinator:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
 
+class DisabledAdaptiveCoordinator:
+    """No-op coordinator used when adaptive mode is not explicitly enabled."""
+
+    def __init__(self) -> None:
+        self._profile = StrategyProfile.default()
+
+    def current_profile(self) -> StrategyProfile:
+        return self._profile
+
+    def observe(self, turn: Any, accepted: Any) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 __all__ = [
     "AdaptiveCoordinator",
+    "DisabledAdaptiveCoordinator",
     "LLMError",
     "LLMTransport",
     "OpenAICompatibleTransport",

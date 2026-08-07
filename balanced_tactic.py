@@ -26,6 +26,7 @@ from arena_hero import (
     core_resource_capacity,
     unit_cost,
 )
+from strategy_policy import StrategyProfile
 
 
 DIRECTIONS = (Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT)
@@ -213,6 +214,7 @@ class TacticMemory:
     known_obstacles: set[tuple[int, int]] = field(default_factory=set)
     processed_event_ids: set[bytes] = field(default_factory=set)
     processed_event_order: list[bytes] = field(default_factory=list)
+    policy: StrategyProfile = field(default_factory=StrategyProfile.default)
 
     def observe(self, turn) -> None:
         # A plan is scoped to one complete Turn.  Never carry a speculative
@@ -426,6 +428,20 @@ def _visible_attack_count(cell, enemies, obstacles) -> int:
     return count
 
 
+def _carrier_destination_is_safe(
+    unit, destination, turn, obstacles, memory=None, *, strict: bool = False
+) -> bool:
+    """Apply the profile's small visible-threat buffer to carrier movement."""
+
+    margin = int(getattr(getattr(memory, "policy", None), "carrier_safety_margin", 0))
+    attacks = _visible_attack_count(
+        destination, getattr(turn, "visible_enemies", ()), obstacles
+    )
+    if strict:
+        return attacks + margin == 0
+    return attacks + margin < max(1, int(getattr(unit, "hp", 0)))
+
+
 def _candidate_steps(
     unit,
     turn,
@@ -553,11 +569,7 @@ def _record_move(
     if (
         memory is not None
         and (other_count == 0 or core_destination)
-        and _visible_attack_count(
-            destination,
-            getattr(turn, "visible_enemies", ()),
-            obstacles,
-        ) < unit.hp
+        and _carrier_destination_is_safe(unit, destination, turn, obstacles, memory)
     ):
         _mark_planned_carrier_move(memory, turn, unit)
     if core is not None:
@@ -610,7 +622,7 @@ def _escape_core_cell(
         if (
             memory is not None
             and other_count == 0
-            and _visible_attack_count(destination, enemies, obstacles) < unit.hp
+            and _carrier_destination_is_safe(unit, destination, turn, obstacles, memory)
         ):
             _mark_planned_carrier_move(memory, turn, unit)
         return True
@@ -685,7 +697,9 @@ def _should_preheal_beacon_carrier(
     occupied = _occupied(turn)
     reserved = set(reserved_destinations or ())
     return not any(
-        _visible_attack_count(destination, enemies, obstacles) == 0
+        _carrier_destination_is_safe(
+            carrier, destination, turn, obstacles, memory, strict=True
+        )
         for _, _, destination, _ in _candidate_steps(
             carrier,
             turn,
@@ -727,9 +741,14 @@ def _should_vacate_core_for_spawn(
     if core_units >= 2:
         return True
     population = int(getattr(turn.state, "population", len(turn.units)))
-    cost = _unit_price(_desired_spawn_type(turn), population)
+    cost = _unit_price(_desired_spawn_type(turn, memory=memory), population)
     available = int(getattr(turn, "resources", 0))
-    return available >= cost
+    aggression = float(getattr(getattr(memory, "policy", None), "spawn_aggression", 0.5))
+    # Keep the old full-cost gate at the default.  Higher aggression may use
+    # only a bounded fraction of the next price, but never bypasses capacity
+    # or recovery checks above.
+    threshold = max(0, int(cost * (1.0 - 0.25 * (aggression - 0.5))))
+    return available >= threshold
 
 
 def _choose_runner(turn, memory: TacticMemory):
@@ -780,7 +799,15 @@ def _choose_runner(turn, memory: TacticMemory):
 
     # Time-to-Beacon dominates.  On equal routes, a healthy Vanguard is the
     # safest carrier, then an empty Worker (economy), then a Ranger.
-    type_priority = {"VANGUARD": 0, "WORKER": 1, "RANGER": 2}
+    beacon_priority = float(getattr(memory.policy, "beacon_priority", 1.0))
+    # Preserve the default tie-break while making high Beacon priority favor a
+    # Vanguard and low priority favor a Worker (economy), without changing
+    # route distance or any visibility rule.
+    type_priority = {
+        "VANGUARD": 0 if beacon_priority >= 1.0 else 1,
+        "WORKER": 1 if beacon_priority >= 1.0 else 0,
+        "RANGER": 2,
+    }
     candidates.sort(
         key=lambda unit: (
             _distance(unit.position, beacon_position),
@@ -1343,7 +1370,7 @@ def _queue_ranger_actions(
             continue
 
         predicted = _predicted_cells(turn, ranger.position, memory)
-        if predicted:
+        if predicted and float(memory.policy.combat_priority) >= 0.75:
             def prediction_rank(item):
                 cell, possible = item
                 has_carrier = any(
@@ -1538,7 +1565,7 @@ def _queue_vanguard_actions(
             ):
                 if _distance(vanguard.position, cell) == 1 and cell not in obstacles:
                     predicted_cells[cell].append(enemy)
-        if predicted_cells:
+        if predicted_cells and float(memory.policy.combat_priority) >= 0.75:
             cell = min(
                 predicted_cells,
                 key=lambda position: (
@@ -2195,6 +2222,7 @@ def _desired_spawn_type(
     turn,
     excluded_ids: Iterable[object] = (),
     population: int | None = None,
+    memory: TacticMemory | None = None,
 ):
     excluded = {_uuid_key(identifier) for identifier in excluded_ids}
     living_units = [
@@ -2208,7 +2236,8 @@ def _desired_spawn_type(
     population = max(0, int(population))
     capacity = core_resource_capacity(population)
 
-    if workers < 2:
+    profile = getattr(memory, "policy", StrategyProfile.default())
+    if workers < profile.worker_target:
         priority = [UnitType.WORKER, UnitType.VANGUARD, UnitType.RANGER]
     elif rangers == 0:
         # At population two the minimum capacity is 10, while the first
@@ -2217,7 +2246,7 @@ def _desired_spawn_type(
         priority = [UnitType.RANGER, UnitType.VANGUARD, UnitType.WORKER]
     elif vanguards == 0:
         priority = [UnitType.VANGUARD, UnitType.RANGER, UnitType.WORKER]
-    elif rangers <= 2 * vanguards:
+    elif rangers <= profile.ranger_ratio * max(1, vanguards):
         priority = [UnitType.RANGER, UnitType.VANGUARD, UnitType.WORKER]
     else:
         priority = [UnitType.VANGUARD, UnitType.RANGER, UnitType.WORKER]
@@ -2282,6 +2311,7 @@ def _spawn_preview(
         turn,
         excluded_ids=dead_ids,
         population=settled_population,
+        memory=memory,
     )
     return (
         unit_type,
@@ -2490,19 +2520,33 @@ def load_api_key() -> str:
     return os.environ.get("ARENA_HERO_API_KEY") or getpass("Arena Hero API key: ")
 
 
-def play(api_key: str | None = None) -> None:
+def play(api_key: str | None = None, adaptive=None) -> None:
+    coordinator = adaptive
     try:
         key = api_key or load_api_key()
+        if coordinator is None:
+            # Import lazily: importing the tactic never initializes adaptive
+            # threads or reads credentials.
+            from adaptive_strategy import AdaptiveCoordinator
+
+            coordinator = AdaptiveCoordinator.from_env()
         memory = TacticMemory()
         with ArenaHeroClient(api_key=key) as game:
             for turn in game.turns():
+                # Snapshot one validated profile at the Turn boundary.  Any
+                # LLM work is queued only after this Turn is submitted.
+                memory.policy = coordinator.current_profile()
                 choose_actions(turn, memory)
                 accepted = turn.submit()
                 print(f"tick={accepted.tick} accepted={accepted.accepted}")
+                coordinator.observe(turn, accepted)
     except KeyboardInterrupt:
         return
     except Exception as exc:
         raise SystemExit(f"Arena Hero stopped: {type(exc).__name__}") from None
+    finally:
+        if coordinator is not None:
+            coordinator.close()
 
 
 if __name__ == "__main__":
