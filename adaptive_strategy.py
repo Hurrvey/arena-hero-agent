@@ -1,8 +1,4 @@
-"""Redacted Arena Hero telemetry and deterministic adaptation primitives.
-
-This module intentionally contains no planner or LLM cycle.  It provides the
-small, deterministic foundation used by the later coordinator task.
-"""
+"""Redacted telemetry and a safe, asynchronous two-role adaptation cycle."""
 
 from __future__ import annotations
 
@@ -11,10 +7,16 @@ from datetime import date, datetime, time
 from enum import Enum
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
-from typing import Any, Mapping
+import threading
+import time as _time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Mapping, Protocol
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from uuid import UUID
 
 from strategy_policy import StrategyProfile, internal_score
@@ -384,7 +386,295 @@ class TelemetryStore:
         return target
 
 
+class LLMError(RuntimeError):
+    """A redacted transport or model-response failure."""
+
+
+class LLMTransport(Protocol):
+    def complete(self, *, model: str, system: str, user: str,
+                 timeout: float | None = None) -> str: ...
+
+
+class OpenAICompatibleTransport:
+    """Minimal OpenAI chat-completions adapter using only urllib."""
+
+    def __init__(self, base_url: str, api_key: str):
+        self.base_url = str(base_url).rstrip("/")
+        self.api_key = str(api_key)
+
+    def complete(self, *, model: str, system: str, user: str,
+                 timeout: float | None = None) -> str:
+        limit = 30.0 if timeout is None else float(timeout)
+        if not math.isfinite(limit) or limit <= 0:
+            raise LLMError("invalid timeout")
+        payload = json.dumps({
+            "model": model,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+            "temperature": 0,
+        }).encode("utf-8")
+        req = urlrequest.Request(
+            self.base_url + "/chat/completions", data=payload,
+            headers={"Content-Type": "application/json",
+                     "Authorization": "Bearer " + self.api_key},
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(req, timeout=limit) as response:
+                body = response.read()
+            decoded = json.loads(body.decode("utf-8"))
+            choices = decoded.get("choices") if isinstance(decoded, Mapping) else None
+            content = choices[0].get("message", {}).get("content") if choices else None
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                chunks = [block if isinstance(block, str) else block.get("text", "")
+                          for block in content
+                          if isinstance(block, str) or (isinstance(block, Mapping) and isinstance(block.get("text", ""), str))]
+                if chunks:
+                    return "".join(chunks)
+            raise ValueError("missing response content")
+        except (urlerror.URLError, urlerror.HTTPError, OSError, ValueError,
+                json.JSONDecodeError) as exc:
+            raise LLMError("LLM request failed") from exc
+
+
+def parse_json_object(text: str) -> dict[str, Any]:
+    """Parse exactly one JSON object, refusing Markdown/code wrappers."""
+    if not isinstance(text, str) or "```" in text:
+        raise ValueError("JSON response must not contain code fences")
+    source = text.strip()
+    start = source.find("{")
+    if start < 0:
+        raise ValueError("invalid JSON object")
+    source = source[start:]
+    decoder = json.JSONDecoder()
+    try:
+        value, end = decoder.raw_decode(source)
+    except json.JSONDecodeError as exc:
+        raise ValueError("invalid JSON object") from exc
+    if "{" in source[end:] or "[" in source[end:] or not isinstance(value, dict):
+        raise ValueError("response must contain one JSON object")
+    return value
+
+
+_EVALUATION_KEYS = {"summary", "strengths", "deficits", "rule_risks",
+                    "recommended_changes", "confidence", "skill_fingerprint"}
+_DESIGNER_KEYS = {"profile", "rationale", "expected_tradeoffs",
+                  "guardrails_acknowledged", "skill_fingerprint"}
+_INSTRUCTION_RE = re.compile(r"(?:```|\b(?:import|exec|eval|subprocess|powershell|shell|os\.system|python)\b)", re.I)
+
+
+def _check_strings(value: Any) -> None:
+    if isinstance(value, str) and _INSTRUCTION_RE.search(value):
+        raise ValueError("arbitrary code or shell instructions are not allowed")
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _check_strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _check_strings(item)
+
+
+def validate_evaluation(payload: Mapping[str, Any], *, skill_fingerprint: str | None = None) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("evaluation must be an object")
+    unknown = set(payload) - _EVALUATION_KEYS
+    required = _EVALUATION_KEYS - {"skill_fingerprint"}
+    if unknown or not required.issubset(payload):
+        raise ValueError("invalid evaluator keys")
+    if skill_fingerprint is not None and payload.get("skill_fingerprint", skill_fingerprint) != skill_fingerprint:
+        raise ValueError("skill fingerprint mismatch")
+    confidence = payload["confidence"]
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not math.isfinite(float(confidence)) or not 0 <= confidence <= 1:
+        raise ValueError("invalid confidence")
+    for key in ("strengths", "deficits", "rule_risks"):
+        if not isinstance(payload[key], list):
+            raise ValueError("evaluation lists required")
+    if not isinstance(payload["summary"], str) or not isinstance(payload["recommended_changes"], (Mapping, list)):
+        raise ValueError("invalid evaluation fields")
+    _check_strings(payload)
+    return dict(payload)
+
+
+def _validate_designer(payload: Mapping[str, Any], *, skill_fingerprint: str,
+                       previous: StrategyProfile) -> tuple[StrategyProfile, dict[str, Any]]:
+    if not isinstance(payload, Mapping) or set(payload) - _DESIGNER_KEYS:
+        raise ValueError("invalid designer keys")
+    if not all(key in payload for key in ("profile", "rationale", "expected_tradeoffs", "guardrails_acknowledged")):
+        raise ValueError("missing designer fields")
+    if payload.get("skill_fingerprint", skill_fingerprint) != skill_fingerprint:
+        raise ValueError("skill fingerprint mismatch")
+    if payload["guardrails_acknowledged"] is not True:
+        raise ValueError("guardrails must be acknowledged")
+    profile = StrategyProfile.from_mapping(payload["profile"])
+    _check_strings(payload)
+    return profile, dict(payload)
+
+
+class AdaptiveCoordinator:
+    """Single-worker, non-blocking observer coordinating evaluator/designer calls."""
+
+    def __init__(self, transport: LLMTransport, state_dir: Path | str,
+                 interval_ticks: int = 60, min_seconds: float = 60.0,
+                 evaluator_model: str = "evaluator", designer_model: str = "designer",
+                 auto_apply: bool = False, rollback_ratio: float = 0.15):
+        self.transport = transport
+        self.state_dir = Path(state_dir)
+        self.store = TelemetryStore(self.state_dir)
+        self.interval_ticks = max(1, int(interval_ticks))
+        self.min_seconds = max(0.0, float(min_seconds))
+        self.evaluator_model = evaluator_model
+        self.designer_model = designer_model
+        self.auto_apply = bool(auto_apply)
+        self.rollback_ratio = max(0.0, float(rollback_ratio))
+        self._profile = StrategyProfile.default()
+        self._previous_profile = self._profile
+        self._previous_score: float | None = None
+        self._active_score: float | None = None
+        self._canary_score: float | None = None
+        self._last_tick = -1
+        self._last_cycle_tick = -1
+        self._last_cycle_time = 0.0
+        self._lock = threading.RLock()
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="adaptive")
+        self._future = None
+        self._closed = False
+        self._load_state()
+
+    def _state_path(self) -> Path:
+        return self.state_dir / "state.json"
+
+    def _write_state(self) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        payload = {"profile": self._profile.to_mapping(),
+                   "previous_profile": self._previous_profile.to_mapping(),
+                   "previous_score": self._previous_score,
+                   "active_score": self._active_score,
+                   "canary_score": self._canary_score}
+        path = self._state_path()
+        temp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+        temp.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        os.replace(temp, path)
+
+    def _load_state(self) -> None:
+        try:
+            payload = json.loads(self._state_path().read_text(encoding="utf-8"))
+            self._profile = StrategyProfile.from_mapping(payload.get("profile", {}))
+            self._previous_profile = StrategyProfile.from_mapping(payload.get("previous_profile", self._profile.to_mapping()))
+            score = payload.get("previous_score")
+            self._previous_score = (float(score) if isinstance(score, (int, float)) and math.isfinite(float(score)) else None)
+            active = payload.get("active_score")
+            self._active_score = (float(active) if isinstance(active, (int, float)) and math.isfinite(float(active)) else None)
+            canary = payload.get("canary_score")
+            self._canary_score = (float(canary) if isinstance(canary, (int, float)) and math.isfinite(float(canary)) else None)
+        except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+            return
+
+    def current_profile(self) -> StrategyProfile:
+        with self._lock:
+            return self._profile
+
+    def ingest_record(self, record: Mapping[str, Any]) -> None:
+        self.store.append(record)
+        tick = record.get("tick")
+        if isinstance(tick, int):
+            self._last_tick = max(self._last_tick, tick)
+
+    def _due(self) -> bool:
+        return self._last_tick >= self._last_cycle_tick + self.interval_ticks and (_time.monotonic() - self._last_cycle_time) >= self.min_seconds
+
+    def observe(self, turn: Any, accepted: Any) -> None:
+        if self._closed:
+            return
+        record = TurnTelemetry.from_turn(turn, accepted, self.current_profile())
+        self.ingest_record(record)
+        if self._due() and (self._future is None or self._future.done()):
+            try:
+                self._future = self._executor.submit(self.run_cycle)
+            except RuntimeError:
+                return
+
+    def activate_profile(self, profile: StrategyProfile, baseline_score: float | None = None) -> None:
+        profile.validate()
+        with self._lock:
+            self._previous_profile = self._profile
+            self._profile = profile
+            if baseline_score is not None and not math.isfinite(float(baseline_score)):
+                raise ValueError("baseline score must be finite")
+            self._previous_score = baseline_score if baseline_score is None else float(baseline_score)
+            self._active_score = self._previous_score
+            self._canary_score = None
+            self._write_state()
+
+    def record_canary_score(self, score: float) -> None:
+        if not math.isfinite(float(score)):
+            raise ValueError("score must be finite")
+        with self._lock:
+            self._canary_score = float(score)
+            self._write_state()
+
+    def rollback_if_needed(self) -> bool:
+        with self._lock:
+            if self._previous_score is None or self._canary_score is None:
+                return False
+            threshold = self._previous_score * (1.0 - self.rollback_ratio)
+            if self._canary_score >= threshold:
+                return False
+            self._profile = self._previous_profile
+            self._active_score = self._previous_score
+            self._canary_score = None
+            self._write_state()
+            return True
+
+    def run_cycle(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            cycle_tick = self._last_tick
+            records = self.store.records_since(self._last_cycle_tick)
+            previous = self._profile
+        self._last_cycle_time = _time.monotonic()
+        self._last_cycle_tick = cycle_tick
+        try:
+            bundle = SkillBundle.load()
+            score = Scorecard.from_records(records)
+            normalized_score = float(score.to_mapping()["internal_score"])
+            if self._active_score is not None and self._profile != self._previous_profile:
+                self.record_canary_score(normalized_score)
+                if self.rollback_if_needed():
+                    self.store.write_report(f"rollback-{int(_time.time())}", {"reason": "normalized score regression", "score": normalized_score})
+                    return
+            evaluation_system = (bundle.prompt_text + "\nRespond with JSON only; never provide Python or shell code. "
+                                 "Required keys: summary, strengths, deficits, rule_risks, recommended_changes, confidence.")
+            evaluation = validate_evaluation(parse_json_object(self.transport.complete(
+                model=self.evaluator_model, system=evaluation_system,
+                user=json.dumps({"scorecard": score.to_mapping(), "records": records}, sort_keys=True), timeout=30.0)),
+                skill_fingerprint=bundle.fingerprint)
+            designer_system = (bundle.prompt_text + f"\nSkill fingerprint: {bundle.fingerprint}\n"
+                               "Respond with JSON only; provide profile, rationale, expected_tradeoffs, guardrails_acknowledged. No code.")
+            candidate, designer = _validate_designer(parse_json_object(self.transport.complete(
+                model=self.designer_model, system=designer_system,
+                user=json.dumps({"profile": previous.to_mapping(), "evaluation": evaluation}, sort_keys=True), timeout=30.0)),
+                skill_fingerprint=bundle.fingerprint, previous=previous)
+            self.store.write_report(f"cycle-{int(_time.time())}", {"evaluation": evaluation, "designer": designer, "score": score.to_mapping()})
+            if self.auto_apply:
+                self.activate_profile(candidate, baseline_score=normalized_score)
+        except Exception as exc:
+            self.store.write_report(f"error-{int(_time.time())}", {"error": type(exc).__name__})
+
+    def close(self) -> None:
+        self._closed = True
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+
 __all__ = [
+    "AdaptiveCoordinator",
+    "LLMError",
+    "LLMTransport",
+    "OpenAICompatibleTransport",
+    "parse_json_object",
+    "validate_evaluation",
     "SkillBundle",
     "SkillBundleError",
     "Scorecard",

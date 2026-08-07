@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -200,3 +201,81 @@ def test_telemetry_store_appends_queries_and_writes_atomic_report(tmp_path):
     report = store.write_report("cycle", {"ok": True})
     assert report.exists()
     assert json.loads(report.read_text(encoding="utf-8"))["ok"] is True
+
+
+class FakeTransport:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def complete(self, *, model, system, user, timeout=None):
+        self.calls.append(SimpleNamespace(model=model, system=system, user=user, timeout=timeout))
+        return self.responses.pop(0)
+
+
+def _evaluation_json():
+    return json.dumps({
+        "summary": "steady",
+        "strengths": ["beacon"],
+        "deficits": ["economy"],
+        "rule_risks": [],
+        "recommended_changes": {"worker_target": 3},
+        "confidence": 0.8,
+    })
+
+
+def _designer_json(worker_target=3):
+    return json.dumps({
+        "profile": StrategyProfile.default().with_updates(worker_target=worker_target).to_mapping(),
+        "rationale": "more workers",
+        "expected_tradeoffs": ["less combat"],
+        "guardrails_acknowledged": True,
+    })
+
+
+def _sample_record(tick=1):
+    return {"tick": tick, "events": [], "beacon": {"status": "IDLE"}}
+
+
+def test_cycle_calls_evaluator_then_designer_and_applies_profile(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+    transport = FakeTransport([_evaluation_json(), _designer_json(worker_target=3)])
+    coordinator = AdaptiveCoordinator(
+        transport=transport, state_dir=tmp_path, interval_ticks=1,
+        min_seconds=0, evaluator_model="critic", designer_model="architect",
+        auto_apply=True,
+    )
+    coordinator.ingest_record(_sample_record(1))
+    coordinator.run_cycle()
+    assert [call.model for call in transport.calls] == ["critic", "architect"]
+    assert coordinator.current_profile().worker_target == 3
+    coordinator.close()
+
+
+def test_invalid_designer_json_keeps_previous_profile(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+    transport = FakeTransport([_evaluation_json(), "not json"])
+    coordinator = AdaptiveCoordinator(transport=transport, state_dir=tmp_path, min_seconds=0, auto_apply=True)
+    coordinator.ingest_record(_sample_record(1))
+    coordinator.run_cycle()
+    assert coordinator.current_profile() == StrategyProfile.default()
+    coordinator.close()
+
+
+def test_canary_score_drop_restores_previous_profile(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+    coordinator = AdaptiveCoordinator(transport=FakeTransport([]), state_dir=tmp_path, rollback_ratio=0.15)
+    coordinator.activate_profile(StrategyProfile.default(), baseline_score=100.0)
+    coordinator.record_canary_score(70.0)
+    coordinator.rollback_if_needed()
+    assert coordinator.current_profile() == StrategyProfile.default()
+    coordinator.close()
+
+
+def test_coordinator_due_check_does_not_block_observation(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+    coordinator = AdaptiveCoordinator(transport=FakeTransport([]), state_dir=tmp_path, interval_ticks=60)
+    started = time.monotonic()
+    coordinator.observe(SimpleNamespace(tick=1, state=SimpleNamespace(status="ACTIVE"), events=()), SimpleNamespace(accepted=True))
+    assert time.monotonic() - started < 0.2
+    coordinator.close()
