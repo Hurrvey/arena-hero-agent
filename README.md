@@ -1,8 +1,8 @@
 # Arena Hero Agent
 
-一个面向 Arena Hero 的确定性平衡战术脚本。它读取每个 Turn 的当前可见状态，为 Core、Worker、Ranger 和 Vanguard 选择合法行动，再通过官方 Python SDK 提交完整计划。
+一个面向 Arena Hero v0.14 的确定性 Beacon-first 战术脚本。它读取每个 Turn 的当前可见状态，为 Core、Worker、Ranger 和 Vanguard 选择合法行动，再通过官方 Python SDK 提交完整计划。
 
-> 这是一套可运行、可测试的 starter tactic，目标是平衡经济、战斗和生存，不承诺每局固定排名或保证第一名。
+> Arena Hero 没有单一总分，而是三个独立的 lifetime 排行榜：Beacon 持有 Tick、造成伤害、Core 摧毁参与。策略优先保护 Beacon 持有时间，再把剩余行动用于可见敌人伤害和 Core 参与；这能提高积分效率，但不能承诺固定名次或保证第一名。
 
 ## 项目简介
 
@@ -12,13 +12,12 @@
 
 ## 主要特性
 
-- **Core 防守优先**：先处理可见战斗威胁和恢复，再考虑生产。
-- **合法远程攻击**：Ranger 只攻击当前可见、处于射程内、方向对齐且没有可见障碍阻挡的目标。
-- **近战清场**：Vanguard 选择相邻可见敌人，优先处理敌方 Core 所在格。
-- **Worker 经济循环**：Worker 采集当前可见资源、把货物运回静止的 Core，并避开可见敌人和障碍。
-- **威胁撤退**：携带货物或受到附近敌人威胁时，Worker 优先向 Core 方向撤退。
-- **恢复与保守生产**：受伤单位在静止 Core 旁按预算恢复；Core 会先治疗或修复，再在保留 upkeep 和安全储备后生产。
-- **机会型 Beacon**：只有在 Beacon 当前可见且位于受控对象所在格时才尝试拾取，不追逐不可见目标。
+- **Beacon 主目标**：Beacon 坐标始终公开；没有己方 carrier 时固定派 runner 接近它，只有当前状态明确为 `GROUND` 且同格时才拾取。
+- **载体保命与护卫**：只把当前 Turn 明确可见的己方 carrier 当作事实；状态进入迷雾时按未知处理，避免把过期 carrier 当成 10 点 shield cap；可见威胁会触发回 Core、护卫或在 Core 同格预排战后 HEAL。
+- **机会型高分战斗**：Ranger 优先敌方 Beacon carrier、威胁己方 carrier 的单位和敌方 Core，直接目标不足时向由可见敌人一步移动推导的合法空格射击；Vanguard 同理使用预测 Sweep。
+- **Worker 经济循环**：最多优先保留两名 Worker，载体可带货拾取 Beacon；其他 Worker 采集当前可见资源、把货物运回静止 Core，避开可见占位/障碍，并在当前受攻击时撤退。
+- **v0.14 动态生产**：取消旧 upkeep 预算，生产价格使用官方 `unit_cost()`；人口为 2 时先用可容纳的 Vanguard 搭容量桥，人口达到 3 后补 Ranger，再按比例补 Vanguard。
+- **确定性记忆**：只长期记忆永久障碍、runner 意图和去重事件；carrier 仅使用当前可见状态或同 Tick 拾取计划，不把迷雾里的资源、敌人或 Beacon 归属当作当前事实。
 - **确定性决策**：相同状态下使用固定方向顺序和 UUID 排序，减少同局行为漂移。
 
 ## 环境要求
@@ -31,7 +30,7 @@
 依赖版本记录在 **requirements.txt** 中：
 
 ~~~text
-arena-hero>=0.2.8,<0.3
+arena-hero>=0.2.9,<0.3
 ~~~
 
 ## 安装
@@ -110,23 +109,23 @@ tick=124 accepted=True
 
 | 对象 | 决策重点 |
 | --- | --- |
-| Core | 静止时才接受存入、治疗、修盾或生产；生产前保留当前 upkeep 和 5 点 Core 安全储备，不主动发起迁移。 |
-| Ranger | 从当前可见敌人中筛选射程 1–3、直线/对角对齐且无遮挡的目标；优先敌方 Core，再按生命值和确定性 ID 排序。 |
-| Vanguard | 只对相邻可见格执行 Sweep；优先含敌方 Core 的格，其次选择敌人数量更多的格。 |
-| Worker | 空载时前往当前可见资源；站在资源格时采集；携货回到静止 Core 时存入；附近有可见敌人时优先撤退。 |
-| Beacon | 只在可见状态为 GROUND 且受控对象已经位于 Beacon 格时拾取；不会根据迷雾信息追踪 Beacon。 |
+| Core | 静止时才接受存入、治疗、修盾或生产；无 upkeep，价格通过 `unit_cost(unit_type, population)` 计算，不主动发起迁移。 |
+| Ranger | 敌方 Beacon carrier > 威胁己方 Beacon carrier 的敌人 > 敌方 Core > 其他敌人；对 carrier/Core 使用精确目标射击，预测位置使用合法 target-free cell fire。 |
+| Vanguard | 先 Sweep 相邻敌方 carrier，再处理威胁己方 carrier 的格、敌方 Core 和其他目标；无真实目标时才 Sweep 可见敌人可能进入的相邻预测格。 |
+| Worker | 初始 runner 沿公开 Beacon 坐标前进；己方 carrier 优先保命/回 Core；其他 Worker 采集当前可见资源，携货回静止 Core 存入。 |
+| Beacon | 只有当前状态为 `GROUND` 且同格才拾取；状态未知时只沿公开坐标移动，不猜测 carrier 或 ground。 |
 
 每个 Turn 的高层优先级是：
 
-1. 处理可见且合法的 Ranger/Vanguard 战斗行动。
-2. 在静止 Core 旁按当前预算安排受伤单位恢复。
-3. 让 Worker 完成存入、采集、返航、撤退或避障移动。
-4. 在不替换更高优先级行动的情况下，处理同格 Beacon 拾取。
-5. Core 先治疗或修复，再检查容量、单位成本、预计 upkeep 和安全储备后生产。
+1. 处理同格 Beacon 拾取和 carrier 生存动作。
+2. 处理敌方 Beacon carrier/Core 的直接攻击与预测格攻击。
+3. 让 runner、护卫和 Worker 完成公开 Beacon 路线、存入、采集、返航或避障移动。
+4. 为 Core HP、可预见的非致命伤害和 Beacon carrier 恢复预留资源；普通 Unit heal 只使用剩余预算，必要时允许同格 Beacon carrier 预排一次满血/战后 HEAL，再执行 Core HEAL/REPAIR。
+5. 使用 v0.14 动态价格生产；人口 2 先走 Vanguard 容量桥，之后保持 Ranger 偏重并补 Vanguard 护卫。
 
 ### 生产倾向
 
-生产不是“资源够成本就立即生产”。starter policy 会先补足 Worker 到 3 个，再补齐 Ranger 和 Vanguard，并保留资源以支付预计 upkeep 和 Core 安全储备：
+v0.14 已移除每 Tick upkeep。前 20 个 Unit 使用基础价格，Core 在不需要恢复且格子有空间时直接使用当前 `unit_cost()` 扩军；第 21 个 Unit 起价格按官方动态公式增加。策略先保留两名 Worker：人口为 2 时容量只有 10，Ranger 的 12 点价格放不下，因此先生产 Vanguard；人口达到 3 后容量为 15，再生产 Ranger，随后按 Ranger 偏重、Vanguard 护卫的比例扩军。
 
 | 单位 | 代码中的基础成本 |
 | --- | ---: |
@@ -134,7 +133,7 @@ tick=124 accepted=True
 | Vanguard | 10 |
 | Ranger | 12 |
 
-如果 Core 正在移动、出生格容量不足、预算不足或没有合法目标，脚本会放弃该动作，不凭空编造行动。
+如果 Core 正在移动、出生格容量不足或资源不足，脚本会放弃该动作，不凭空编造行动；若可见 Unit 将在本 Tick 战死，脚本也会预览战后人口，允许动态价格下降后再尝试一次无成本失败的 SPAWN。战斗单位不读取已删除的 upkeep 字段；人口很高导致首选战斗单位价格超过容量时，只要仍有可容纳的单位类型，就会回退到该类型，减少常见的生产死锁。若所有单位价格都已超过当前容量，脚本会等待人口或资源状态变化，不会提交注定失败的生产动作。
 
 ## 本地测试
 
@@ -151,12 +150,12 @@ python -m pytest -q
 python -m pip install pytest
 ~~~
 
-当前测试覆盖 22 个行为场景，包括：
+当前测试覆盖 64 个行为场景，包括：
 
 - Ranger 射击范围、对齐和障碍判断。
 - Vanguard 相邻目标选择。
 - Worker 采集、存入、分配、避障和受威胁撤退。
-- 单位/Core 恢复、Beacon 拾取和生产预算。
+- 单位/Core 恢复（含战后预防性 HEAL）、Beacon runner/carrier 记忆、预测射击/扫击和动态生产价格。
 - Core 移动时禁止存入和生产。
 - API key 不被打印，以及每个 Turn 只提交一次计划。
 
