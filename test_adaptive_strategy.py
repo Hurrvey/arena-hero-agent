@@ -361,6 +361,26 @@ def test_disabled_factory_is_used_without_opt_in(monkeypatch):
     coordinator.close()
 
 
+def test_env_factory_uses_separate_llm_credential_and_background_defaults(tmp_path, monkeypatch):
+    from adaptive_strategy import AdaptiveCoordinator, DisabledAdaptiveCoordinator
+
+    monkeypatch.setenv("ARENA_HERO_ADAPTIVE", "1")
+    monkeypatch.setenv("ARENA_HERO_LLM_API_KEY", "llm-only-secret")
+    monkeypatch.setenv("ARENA_HERO_EVALUATOR_MODEL", "critic")
+    monkeypatch.setenv("ARENA_HERO_DESIGNER_MODEL", "architect")
+    monkeypatch.setenv("ARENA_HERO_ADAPTIVE_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("ARENA_HERO_API_KEY", raising=False)
+
+    coordinator = AdaptiveCoordinator.from_env()
+    assert isinstance(coordinator, AdaptiveCoordinator)
+    assert not isinstance(coordinator, DisabledAdaptiveCoordinator)
+    assert coordinator.transport.api_key == "llm-only-secret"
+    assert coordinator.evaluator_model == "critic"
+    assert coordinator.designer_model == "architect"
+    assert coordinator.min_seconds == 900.0
+    coordinator.close()
+
+
 def test_openai_transport_rejects_malformed_choices_without_leaking_details(monkeypatch):
     from adaptive_strategy import LLMError, OpenAICompatibleTransport
 
