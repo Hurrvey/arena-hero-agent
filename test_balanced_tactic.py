@@ -726,6 +726,49 @@ def test_adaptive_observation_failure_does_not_stop_submissions(monkeypatch, cap
     assert capsys.readouterr().out == "tick=8 accepted=True\n"
 
 
+def test_play_uses_the_turn_profile_snapshot_for_adaptive_observation(monkeypatch, capsys) -> None:
+    snapshots = []
+
+    class FakeTurn:
+        tick = 9
+        core = None
+
+        def submit(self):
+            return SimpleNamespace(tick=self.tick, accepted=True)
+
+    class FakeGame:
+        def __init__(self, *, api_key):
+            assert api_key == "provided-key"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def turns(self):
+            yield FakeTurn()
+
+    class SnapshotCoordinator:
+        def current_profile(self):
+            return StrategyProfile.default().with_updates(worker_target=3)
+
+        def observe(self, turn, accepted):
+            raise AssertionError("legacy observe should not be used when snapshot API exists")
+
+        def observe_snapshot(self, turn, accepted, profile):
+            snapshots.append(profile)
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
+    play("provided-key", adaptive=SnapshotCoordinator())
+
+    assert snapshots and snapshots[0].worker_target == 3
+    assert capsys.readouterr().out == "tick=9 accepted=True\n"
+
+
 def test_core_beacon_pickup_is_not_replaced_by_production() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),

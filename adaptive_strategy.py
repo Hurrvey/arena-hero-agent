@@ -702,11 +702,15 @@ class AdaptiveCoordinator:
     def _due(self) -> bool:
         return self._last_tick >= self._last_cycle_tick + self.interval_ticks and (_time.monotonic() - self._last_cycle_time) >= self.min_seconds
 
-    def observe(self, turn: Any, accepted: Any) -> None:
+    def observe_snapshot(
+        self, turn: Any, accepted: Any, profile: StrategyProfile
+    ) -> None:
+        """Persist a Turn with the exact profile that generated its plan."""
         if self._closed:
             return
         try:
-            record = TurnTelemetry.from_turn(turn, accepted, self.current_profile())
+            profile.validate()
+            record = TurnTelemetry.from_turn(turn, accepted, profile)
             self.ingest_record(record)
             if self._due() and (self._future is None or self._future.done()):
                 self._future = self._executor.submit(self.run_cycle)
@@ -715,14 +719,25 @@ class AdaptiveCoordinator:
             # errors must never terminate the live deterministic game loop.
             return
 
+    def observe(self, turn: Any, accepted: Any) -> None:
+        """Observe using the current profile for direct callers."""
+
+        self.observe_snapshot(turn, accepted, self.current_profile())
+
     def activate_profile(self, profile: StrategyProfile, baseline_score: float | None = None) -> None:
         profile.validate()
+        parsed_score: float | None = None
+        if baseline_score is not None:
+            try:
+                parsed_score = float(baseline_score)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("baseline score must be finite") from exc
+            if not math.isfinite(parsed_score):
+                raise ValueError("baseline score must be finite")
         with self._lock:
             self._previous_profile = self._profile
             self._profile = profile
-            if baseline_score is not None and not math.isfinite(float(baseline_score)):
-                raise ValueError("baseline score must be finite")
-            self._previous_score = baseline_score if baseline_score is None else float(baseline_score)
+            self._previous_score = parsed_score
             self._active_score = self._previous_score
             self._canary_score = None
             self._write_state()
@@ -826,6 +841,11 @@ class DisabledAdaptiveCoordinator:
         return self._profile
 
     def observe(self, turn: Any, accepted: Any) -> None:
+        return None
+
+    def observe_snapshot(
+        self, turn: Any, accepted: Any, profile: StrategyProfile
+    ) -> None:
         return None
 
     def close(self) -> None:

@@ -2552,7 +2552,13 @@ def play(api_key: str | None = None, adaptive=None) -> None:
                 try:
                     # Observation is deliberately after submit.  Any local
                     # telemetry or background LLM failure is fail-open.
-                    coordinator.observe(turn, accepted)
+                    snapshot_observer = getattr(coordinator, "observe_snapshot", None)
+                    if callable(snapshot_observer):
+                        snapshot_observer(turn, accepted, profile)
+                    else:
+                        # Preserve compatibility with injected coordinators
+                        # implementing the original two-argument interface.
+                        coordinator.observe(turn, accepted)
                 except Exception:
                     continue
     except KeyboardInterrupt:

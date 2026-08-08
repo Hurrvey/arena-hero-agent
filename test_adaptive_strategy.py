@@ -333,6 +333,35 @@ def test_negative_baseline_rollback_uses_absolute_regression(tmp_path):
     coordinator.close()
 
 
+def test_invalid_activation_baseline_does_not_mutate_profile(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+
+    coordinator = AdaptiveCoordinator(FakeTransport([]), tmp_path)
+    before = coordinator.current_profile()
+    candidate = before.with_updates(worker_target=3)
+    with pytest.raises(ValueError):
+        coordinator.activate_profile(candidate, baseline_score=float("inf"))
+    assert coordinator.current_profile() == before
+    coordinator.close()
+
+
+def test_observe_snapshot_persists_profile_used_for_the_turn(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+
+    coordinator = AdaptiveCoordinator(
+        FakeTransport([]), tmp_path, interval_ticks=100, min_seconds=900
+    )
+    snapshot = StrategyProfile.default().with_updates(worker_target=3)
+    coordinator.observe_snapshot(
+        SimpleNamespace(tick=1, state=SimpleNamespace(status="ACTIVE"), events=()),
+        SimpleNamespace(accepted=True),
+        snapshot,
+    )
+    rows = coordinator.store.records_since(0)
+    assert rows[0]["profile"]["worker_target"] == 3
+    coordinator.close()
+
+
 def test_scorecard_ignores_nonfinite_or_negative_event_numbers():
     from adaptive_strategy import Scorecard
 
