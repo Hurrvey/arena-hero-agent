@@ -119,5 +119,7 @@ def internal_score(metrics: Mapping[str, float]) -> float:
             raise ValueError(f"metric {name} must be numeric")
         if not math.isfinite(float(value)):
             raise ValueError(f"metric {name} must be finite")
+        if float(value) < 0:
+            raise ValueError(f"metric {name} must be non-negative")
         total += float(value) * weight
     return total

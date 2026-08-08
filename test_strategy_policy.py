@@ -66,3 +66,8 @@ def test_profile_rejects_non_string_mapping_keys_without_sorting_error():
 
 def test_internal_score_uses_exact_beacon_weight_without_tiebreaker():
     assert internal_score({"beacon_ticks": 2}) == 20.0
+
+
+def test_internal_score_rejects_negative_observation_counts():
+    with pytest.raises(ValueError):
+        internal_score({"beacon_ticks": -1})

@@ -13,6 +13,7 @@ from balanced_tactic import (
     _queue_beacon_pickup,
     _queue_unit_heals,
     _kind,
+    _choose_runner,
     choose_actions,
     load_api_key,
     play,
@@ -617,6 +618,31 @@ def test_profile_carrier_margin_requires_a_safer_retreat() -> None:
     assert carrier.actions or core.actions
 
 
+def test_profile_economy_priority_breaks_equal_runner_tie() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0), hp=5, shield=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0), hp=2, unit_type=UnitType.WORKER,
+    )
+    vanguard = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(0, 1), hp=4, unit_type=UnitType.VANGUARD,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker, vanguard),
+        beacon=SimpleNamespace(position=(2, 1), status="GROUND", carrier_id=None),
+    )
+    memory = TacticMemory(
+        policy=StrategyProfile.default().with_updates(economy_priority=1.5)
+    )
+
+    assert _choose_runner(turn, memory) is worker
+
+
 def test_play_without_adaptive_coordinator_keeps_one_submission(monkeypatch, capsys) -> None:
     submissions = []
 
@@ -657,6 +683,47 @@ def test_play_without_adaptive_coordinator_keeps_one_submission(monkeypatch, cap
 
     assert submissions == [7]
     assert capsys.readouterr().out == "tick=7 accepted=True\n"
+
+
+def test_adaptive_observation_failure_does_not_stop_submissions(monkeypatch, capsys) -> None:
+    submissions: list[int] = []
+
+    class FakeTurn:
+        tick = 8
+        core = None
+
+        def submit(self):
+            submissions.append(self.tick)
+            return SimpleNamespace(tick=self.tick, accepted=True)
+
+    class FakeGame:
+        def __init__(self, *, api_key):
+            assert api_key == "provided-key"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def turns(self):
+            yield FakeTurn()
+
+    class FailingCoordinator:
+        def current_profile(self):
+            return StrategyProfile.default()
+
+        def observe(self, turn, accepted):
+            raise OSError("telemetry disk unavailable")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
+    play("provided-key", adaptive=FailingCoordinator())
+
+    assert submissions == [8]
+    assert capsys.readouterr().out == "tick=8 accepted=True\n"
 
 
 def test_core_beacon_pickup_is_not_replaced_by_production() -> None:

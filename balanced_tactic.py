@@ -800,12 +800,14 @@ def _choose_runner(turn, memory: TacticMemory):
     # Time-to-Beacon dominates.  On equal routes, a healthy Vanguard is the
     # safest carrier, then an empty Worker (economy), then a Ranger.
     beacon_priority = float(getattr(memory.policy, "beacon_priority", 1.0))
-    # Preserve the default tie-break while making high Beacon priority favor a
-    # Vanguard and low priority favor a Worker (economy), without changing
-    # route distance or any visibility rule.
+    economy_priority = float(getattr(memory.policy, "economy_priority", 1.0))
+    # Preserve the default tie-break while allowing the bounded Beacon/economy
+    # tradeoff to decide only equal-length routes.  Distance and visibility
+    # remain authoritative; a profile can never abandon a closer Beacon.
+    economy_tie = economy_priority > beacon_priority
     type_priority = {
-        "VANGUARD": 0 if beacon_priority >= 1.0 else 1,
-        "WORKER": 1 if beacon_priority >= 1.0 else 0,
+        "VANGUARD": 1 if economy_tie else 0,
+        "WORKER": 0 if economy_tie else 1,
         "RANGER": 2,
     }
     candidates.sort(
@@ -2535,18 +2537,34 @@ def play(api_key: str | None = None, adaptive=None) -> None:
             for turn in game.turns():
                 # Snapshot one validated profile at the Turn boundary.  Any
                 # LLM work is queued only after this Turn is submitted.
-                memory.policy = coordinator.current_profile()
+                try:
+                    profile = coordinator.current_profile()
+                    profile.validate()
+                except Exception:
+                    # Adaptive state is optional; a corrupt or unavailable
+                    # profile must never prevent the deterministic tactic
+                    # from submitting its next legal plan.
+                    profile = StrategyProfile.default()
+                memory.policy = profile
                 choose_actions(turn, memory)
                 accepted = turn.submit()
                 print(f"tick={accepted.tick} accepted={accepted.accepted}")
-                coordinator.observe(turn, accepted)
+                try:
+                    # Observation is deliberately after submit.  Any local
+                    # telemetry or background LLM failure is fail-open.
+                    coordinator.observe(turn, accepted)
+                except Exception:
+                    continue
     except KeyboardInterrupt:
         return
     except Exception as exc:
         raise SystemExit(f"Arena Hero stopped: {type(exc).__name__}") from None
     finally:
         if coordinator is not None:
-            coordinator.close()
+            try:
+                coordinator.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

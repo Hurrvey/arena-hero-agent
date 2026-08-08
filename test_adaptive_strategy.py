@@ -213,24 +213,30 @@ class FakeTransport:
         return self.responses.pop(0)
 
 
-def _evaluation_json():
-    return json.dumps({
+def _evaluation_json(skill_fingerprint=None):
+    payload = {
         "summary": "steady",
         "strengths": ["beacon"],
         "deficits": ["economy"],
         "rule_risks": [],
         "recommended_changes": {"worker_target": 3},
         "confidence": 0.8,
-    })
+    }
+    if skill_fingerprint is not None:
+        payload["skill_fingerprint"] = skill_fingerprint
+    return json.dumps(payload)
 
 
-def _designer_json(worker_target=3):
-    return json.dumps({
+def _designer_json(worker_target=3, skill_fingerprint=None):
+    payload = {
         "profile": StrategyProfile.default().with_updates(worker_target=worker_target).to_mapping(),
         "rationale": "more workers",
         "expected_tradeoffs": ["less combat"],
         "guardrails_acknowledged": True,
-    })
+    }
+    if skill_fingerprint is not None:
+        payload["skill_fingerprint"] = skill_fingerprint
+    return json.dumps(payload)
 
 
 def _sample_record(tick=1):
@@ -238,8 +244,12 @@ def _sample_record(tick=1):
 
 
 def test_cycle_calls_evaluator_then_designer_and_applies_profile(tmp_path):
-    from adaptive_strategy import AdaptiveCoordinator
-    transport = FakeTransport([_evaluation_json(), _designer_json(worker_target=3)])
+    from adaptive_strategy import AdaptiveCoordinator, SkillBundle
+    fingerprint = SkillBundle.load().fingerprint
+    transport = FakeTransport([
+        _evaluation_json(fingerprint),
+        _designer_json(worker_target=3, skill_fingerprint=fingerprint),
+    ])
     coordinator = AdaptiveCoordinator(
         transport=transport, state_dir=tmp_path, interval_ticks=1,
         min_seconds=0, evaluator_model="critic", designer_model="architect",
@@ -253,8 +263,8 @@ def test_cycle_calls_evaluator_then_designer_and_applies_profile(tmp_path):
 
 
 def test_invalid_designer_json_keeps_previous_profile(tmp_path):
-    from adaptive_strategy import AdaptiveCoordinator
-    transport = FakeTransport([_evaluation_json(), "not json"])
+    from adaptive_strategy import AdaptiveCoordinator, SkillBundle
+    transport = FakeTransport([_evaluation_json(SkillBundle.load().fingerprint), "not json"])
     coordinator = AdaptiveCoordinator(transport=transport, state_dir=tmp_path, min_seconds=0, auto_apply=True)
     coordinator.ingest_record(_sample_record(1))
     coordinator.run_cycle()
@@ -278,4 +288,155 @@ def test_coordinator_due_check_does_not_block_observation(tmp_path):
     started = time.monotonic()
     coordinator.observe(SimpleNamespace(tick=1, state=SimpleNamespace(status="ACTIVE"), events=()), SimpleNamespace(accepted=True))
     assert time.monotonic() - started < 0.2
+    coordinator.close()
+
+
+def test_parse_json_object_rejects_prefix_and_trailing_text():
+    from adaptive_strategy import parse_json_object
+
+    with pytest.raises(ValueError):
+        parse_json_object("Here is the result: {\"ok\": true}")
+    with pytest.raises(ValueError):
+        parse_json_object('{"ok": true} trailing prose')
+    with pytest.raises(ValueError):
+        parse_json_object('[1, 2]')
+
+
+def test_evaluator_requires_current_skill_fingerprint():
+    from adaptive_strategy import validate_evaluation
+
+    payload = {
+        "summary": "steady",
+        "strengths": [],
+        "deficits": [],
+        "rule_risks": [],
+        "recommended_changes": {},
+        "confidence": 0.5,
+    }
+    with pytest.raises(ValueError):
+        validate_evaluation(payload, skill_fingerprint="current-fingerprint")
+
+
+def test_negative_baseline_rollback_uses_absolute_regression(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+
+    coordinator = AdaptiveCoordinator(
+        transport=FakeTransport([]), state_dir=tmp_path, rollback_ratio=0.15
+    )
+    candidate = StrategyProfile.default().with_updates(worker_target=3)
+    coordinator.activate_profile(candidate, baseline_score=-100.0)
+    coordinator.record_canary_score(-90.0)
+    assert coordinator.rollback_if_needed() is False
+    coordinator.record_canary_score(-120.0)
+    assert coordinator.rollback_if_needed() is True
+    assert coordinator.current_profile() == StrategyProfile.default()
+    coordinator.close()
+
+
+def test_scorecard_ignores_nonfinite_or_negative_event_numbers():
+    from adaptive_strategy import Scorecard
+
+    score = Scorecard.from_records([{
+        "tick": 1,
+        "events": [
+            _event("nan", "HARVEST_SUCCEEDED", values={"amount": float("nan")}),
+            _event("negative", "DEPOSIT_SUCCEEDED", values={"amount": -3}),
+            _event("damage", "SHOT_HIT", values={"damage": float("inf")}),
+        ],
+    }])
+    assert score.resources_harvested == 0
+    assert score.resources_deposited == 0
+    assert score.damage_dealt == 0
+    assert score.to_mapping()["internal_score"] == 0
+
+
+def test_disabled_factory_is_used_without_opt_in(monkeypatch):
+    from adaptive_strategy import AdaptiveCoordinator, DisabledAdaptiveCoordinator
+
+    monkeypatch.delenv("ARENA_HERO_ADAPTIVE", raising=False)
+    monkeypatch.delenv("ARENA_HERO_LLM_API_KEY", raising=False)
+    coordinator = AdaptiveCoordinator.from_env()
+    assert isinstance(coordinator, DisabledAdaptiveCoordinator)
+    assert coordinator.current_profile() == StrategyProfile.default()
+    coordinator.close()
+
+
+def test_openai_transport_rejects_malformed_choices_without_leaking_details(monkeypatch):
+    from adaptive_strategy import LLMError, OpenAICompatibleTransport
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, *args):
+            return b'{"choices": {"0": {}}}'
+
+    monkeypatch.setattr("adaptive_strategy.urlrequest.urlopen", lambda *args, **kwargs: Response())
+    with pytest.raises(LLMError, match="LLM request failed"):
+        OpenAICompatibleTransport("https://example.invalid/v1", "top-secret").complete(
+            model="m", system="s", user="u"
+        )
+
+
+def test_cycle_bounds_untrusted_records_before_llm_prompt(tmp_path, monkeypatch):
+    from adaptive_strategy import AdaptiveCoordinator, SkillBundle
+
+    bundle = SkillBundle("fingerprint", "rules")
+    monkeypatch.setattr("adaptive_strategy.SkillBundle.load", classmethod(lambda cls, root=None: bundle))
+    transport = FakeTransport([
+        json.dumps({
+            "summary": "steady", "strengths": [], "deficits": [],
+            "rule_risks": [], "recommended_changes": {}, "confidence": 0.5,
+            "skill_fingerprint": "fingerprint",
+        }),
+        json.dumps({
+            "profile": StrategyProfile.default().to_mapping(),
+            "rationale": "unchanged", "expected_tradeoffs": [],
+            "guardrails_acknowledged": True, "skill_fingerprint": "fingerprint",
+        }),
+    ])
+    coordinator = AdaptiveCoordinator(
+        transport=transport, state_dir=tmp_path, interval_ticks=1,
+        min_seconds=0, auto_apply=False,
+    )
+    for tick in range(1, 401):
+        coordinator.ingest_record({"tick": tick, "events": [{"text": "x" * 2000}]})
+    coordinator.run_cycle()
+    assert transport.calls
+    assert len(transport.calls[0].user) <= 120_000
+    coordinator.close()
+
+
+def test_observe_fails_open_when_telemetry_storage_is_unavailable(tmp_path, monkeypatch):
+    from adaptive_strategy import AdaptiveCoordinator
+
+    coordinator = AdaptiveCoordinator(FakeTransport([]), tmp_path, min_seconds=0)
+    monkeypatch.setattr(coordinator, "ingest_record", lambda record: (_ for _ in ()).throw(OSError("disk")))
+    coordinator.observe(
+        SimpleNamespace(tick=1, state=SimpleNamespace(status="ACTIVE"), events=()),
+        SimpleNamespace(accepted=True),
+    )
+    coordinator.close()
+
+
+def test_coordinator_rejects_nonfinite_rollback_ratio(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+
+    with pytest.raises(ValueError):
+        AdaptiveCoordinator(FakeTransport([]), tmp_path, rollback_ratio=float("nan"))
+
+
+def test_coordinator_interval_is_measured_in_complete_ticks(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator
+
+    coordinator = AdaptiveCoordinator(
+        FakeTransport([]), tmp_path, interval_ticks=60, min_seconds=0
+    )
+    coordinator.ingest_record({"tick": 59, "events": []})
+    assert coordinator._due() is False
+    coordinator.ingest_record({"tick": 60, "events": []})
+    assert coordinator._due() is True
     coordinator.close()
