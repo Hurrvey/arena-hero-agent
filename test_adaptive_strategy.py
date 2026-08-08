@@ -440,3 +440,14 @@ def test_coordinator_interval_is_measured_in_complete_ticks(tmp_path):
     coordinator.ingest_record({"tick": 60, "events": []})
     assert coordinator._due() is True
     coordinator.close()
+
+
+def test_readme_documents_adaptive_safety_contract():
+    text = Path("README.md").read_text(encoding="utf-8")
+    for phrase in (
+        "ARENA_HERO_ADAPTIVE",
+        "ARENA_HERO_LLM_API_KEY",
+        "回滚",
+        "不会执行 LLM 生成的 Python",
+    ):
+        assert phrase in text

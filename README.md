@@ -99,6 +99,37 @@ tick=124 accepted=True
 - 脚本进程必须保持运行，关闭 PowerShell 窗口会停止后续计划提交。
 - 按 Ctrl+C 可以停止脚本。
 
+## 可选：双 LLM 自适应评估与重设计
+
+默认情况下脚本只运行确定性的 `balanced_tactic.py`，不会连接任何 LLM。打开自适应模式后，主战术仍然是唯一的行动权威：每个 Turn 先根据当前可见状态生成并提交一份完整计划，提交完成后才把脱敏遥测写入本地队列。到达 Tick/时间间隔后，后台线程才启动两阶段循环：
+
+1. **评估模型**读取本机最新的 `$arena-hero` skill 规则包、上一 Tick 事件和 Beacon/经济/战斗 scorecard，输出缺陷、规则风险和改进建议。
+2. **重设计模型**读取同一份带 SHA-256 指纹的规则包、当前 `StrategyProfile` 和上一步评估，只能输出有限 JSON 参数（Worker 目标、Beacon/经济权重、战斗倾向、载体安全余量等）。它不能提交行动、写 Python、执行 Shell 或读取迷雾信息；系统不会执行 LLM 生成的 Python。
+
+候选参数会在本地做 schema、范围、规则指纹和 Beacon/经济下限校验，再以 Turn 边界替换配置。后续周期用同一 scorecard 做金丝雀比较；分数按配置比例下降时自动**回滚**到上一份 profile。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。内部 score 只是调参信号，不是官方总榜，也不能保证固定第一名；Arena Hero 的 Beacon、伤害、Core 参与仍是三个独立 lifetime 排行榜。
+
+### PowerShell 配置
+
+LLM 凭据必须与 Arena Hero 的 `ARENA_HERO_API_KEY` 分开。下面的值只是占位符，请在本机 secret 管理器中注入，不要提交到 Git：
+
+~~~powershell
+$env:ARENA_HERO_ADAPTIVE="1"
+$env:ARENA_HERO_LLM_API_KEY="独立的_LLM_API_KEY"
+$env:ARENA_HERO_LLM_BASE_URL="https://api.openai.com/v1"
+$env:ARENA_HERO_EVALUATOR_MODEL="评估模型名"
+$env:ARENA_HERO_DESIGNER_MODEL="重设计模型名"
+$env:ARENA_HERO_ADAPTIVE_INTERVAL_TICKS="60"
+$env:ARENA_HERO_ADAPTIVE_MIN_SECONDS="900"
+$env:ARENA_HERO_ADAPTIVE_AUTO_APPLY="1"
+$env:ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO="0.15"
+$env:ARENA_HERO_ADAPTIVE_STATE_DIR=".codex_tmp/adaptive"
+python .\balanced_tactic.py
+~~~
+
+`ARENA_HERO_LLM_BASE_URL` 需要指向 OpenAI-compatible 的版本根路径（例如 `/v1`）；程序会请求其 `/chat/completions`。评估模型和重设计模型可以是同一个模型，也可以分别指定。缺少 `ARENA_HERO_ADAPTIVE=1`、独立 LLM key 或任一模型名时，自适应功能安全关闭，原有战术行为不变。将 `ARENA_HERO_ADAPTIVE_AUTO_APPLY` 设为 `0` 可先观察报告而不自动采用候选 profile。
+
+运行态 `telemetry.jsonl`、周期报告和 `state.json` 默认位于 `.codex_tmp/adaptive/`，已被 `.gitignore` 排除。规则包每个周期重新读取并计算指纹，因此更新本地 arena-hero skill 后，下一轮评估会使用新规则；旧规则的模型输出不会通过指纹校验。
+
 ## 观察、停止与手动操作
 
 脚本运行后，可以打开 [Arena Hero Arena](https://app.arenahero.io/arena)，并登录与 API key 对应的同一个账号查看对局。
@@ -150,7 +181,7 @@ python -m pytest -q
 python -m pip install pytest
 ~~~
 
-当前测试覆盖 64 个行为场景，包括：
+当前测试集覆盖确定性战术与自适应闭环（运行 `python -m pytest -q` 可查看精确数量），包括：
 
 - Ranger 射击范围、对齐和障碍判断。
 - Vanguard 相邻目标选择。
@@ -158,6 +189,7 @@ python -m pip install pytest
 - 单位/Core 恢复（含战后预防性 HEAL）、Beacon runner/carrier 记忆、预测射击/扫击和动态生产价格。
 - Core 移动时禁止存入和生产。
 - API key 不被打印，以及每个 Turn 只提交一次计划。
+- 两阶段 evaluator/designer 顺序、规则指纹、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
 
 也可以运行依赖和差异检查：
 
@@ -244,8 +276,11 @@ git push -u origin main
 | 文件 | 用途 |
 | --- | --- |
 | [balanced_tactic.py](balanced_tactic.py) | 战术决策、API key 读取和持续运行入口。 |
+| [strategy_policy.py](strategy_policy.py) | 有范围约束的 `StrategyProfile` 与 Beacon/经济 score 计算。 |
+| [adaptive_strategy.py](adaptive_strategy.py) | 脱敏遥测、规则指纹、双 LLM 协调器、金丝雀回滚与禁用模式。 |
 | [requirements.txt](requirements.txt) | Arena Hero Python SDK 版本约束。 |
 | [test_balanced_tactic.py](test_balanced_tactic.py) | 无需真实连接的行为测试。 |
+| [test_adaptive_strategy.py](test_adaptive_strategy.py) | 自适应遥测、评分、传输和回滚测试。 |
 | [LICENSE](LICENSE) | GNU GPL v3 许可证全文。 |
 
 ## 许可证
