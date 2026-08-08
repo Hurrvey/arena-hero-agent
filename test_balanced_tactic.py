@@ -574,7 +574,7 @@ def test_load_api_key_uses_the_project_dotenv_by_default(tmp_path, monkeypatch) 
     assert load_api_key() == "default-dotenv-key"
 
 
-def test_play_submits_one_complete_plan_for_each_turn(monkeypatch, capsys) -> None:
+def test_play_submits_one_complete_plan_for_each_turn(tmp_path, monkeypatch, capsys) -> None:
     submissions: list[int] = []
 
     class FakeTurn:
@@ -599,6 +599,9 @@ def test_play_submits_one_complete_plan_for_each_turn(monkeypatch, capsys) -> No
             yield FakeTurn()
 
     monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
+    # Keep this deterministic loop test independent of a user's real local
+    # .env, which may opt into the background LLM coordinator.
+    monkeypatch.setattr("adaptive_strategy._DEFAULT_DOTENV_PATH", tmp_path / "missing.env")
 
     play("provided-key")
 
