@@ -47,6 +47,24 @@ python -m pip install -r requirements.txt
 
 ## 配置 API key
 
+### 推荐：本地 `.env`（一次配置）
+
+仓库根目录已经放好一个被 Git 忽略的 `.env` 模板。打开它，填入自己的
+`ARENA_HERO_API_KEY`；如果要启用双 LLM 自适应评估，再填入
+`ARENA_HERO_LLM_API_KEY`、两个模型名，并保持 `ARENA_HERO_ADAPTIVE=1`：
+
+~~~powershell
+cd D:\arena-hero
+notepad .env
+python .\balanced_tactic.py
+~~~
+
+脚本启动时会自动读取这个文件，因此不需要每次重新声明一长串
+`$env:ARENA_HERO_...`。如果同名变量已经由当前进程、CI secret 或密钥管理器
+注入，进程变量优先，`.env` 不会覆盖它。克隆仓库后不会自动得到 `.env`（这是
+有意的安全设计），只需在本机重新创建或复制自己的配置即可。默认读取的是
+仓库（脚本）目录下的 `.env`；空值按未设置处理。
+
 ### 推荐：运行时隐藏输入
 
 直接启动脚本：
@@ -57,7 +75,7 @@ python .\balanced_tactic.py
 
 如果当前进程没有设置 ARENA_HERO_API_KEY，脚本会显示 Arena Hero API key: 提示，并使用隐藏输入读取密钥。输入时字符不会回显到终端。
 
-### 使用环境变量
+### 临时使用环境变量（可选）
 
 脚本会优先读取当前进程中的 ARENA_HERO_API_KEY。在自动化环境中，可以让本机密钥管理器或 CI 的 secret 注入这个变量，然后照常运行：
 
@@ -108,9 +126,28 @@ tick=124 accepted=True
 
 候选参数会在本地做 schema、范围、规则指纹和 Beacon/经济下限校验，再以 Turn 边界替换配置。后续周期用同一 scorecard 做金丝雀比较；分数按配置比例下降时自动**回滚**到上一份 profile。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。内部 score 只是调参信号，不是官方总榜，也不能保证固定第一名；Arena Hero 的 Beacon、伤害、Core 参与仍是三个独立 lifetime 排行榜。
 
-### PowerShell 配置
+### 本地 `.env` 配置（推荐）
 
-LLM 凭据必须与 Arena Hero 的 `ARENA_HERO_API_KEY` 分开。下面的值只是占位符，请在本机 secret 管理器中注入，不要提交到 Git：
+LLM 凭据必须与 Arena Hero 的 `ARENA_HERO_API_KEY` 分开。上面的本地
+`.env` 模板已经列出自适应模式所需的全部变量；程序会在启动时自动读取它。
+请只在本机填写真实值，不要提交 `.env`。空值按“未设置”处理，内置默认值仍会生效：
+
+~~~text
+ARENA_HERO_ADAPTIVE=1
+ARENA_HERO_LLM_API_KEY=独立的_LLM_API_KEY
+ARENA_HERO_LLM_BASE_URL=https://api.openai.com/v1
+ARENA_HERO_EVALUATOR_MODEL=评估模型名
+ARENA_HERO_DESIGNER_MODEL=重设计模型名
+ARENA_HERO_ADAPTIVE_INTERVAL_TICKS=60
+ARENA_HERO_ADAPTIVE_MIN_SECONDS=900
+ARENA_HERO_ADAPTIVE_AUTO_APPLY=1
+ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO=0.15
+ARENA_HERO_ADAPTIVE_STATE_DIR=.codex_tmp/adaptive
+~~~
+
+### 临时 PowerShell 覆盖（可选）
+
+如果只想为当前 PowerShell 会话临时覆盖 `.env`，可以使用下面的命令；关闭终端后这些设置就会消失：
 
 ~~~powershell
 $env:ARENA_HERO_ADAPTIVE="1"

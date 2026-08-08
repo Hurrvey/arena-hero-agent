@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -379,14 +380,89 @@ def test_scorecard_ignores_nonfinite_or_negative_event_numbers():
     assert score.to_mapping()["internal_score"] == 0
 
 
-def test_disabled_factory_is_used_without_opt_in(monkeypatch):
+def test_disabled_factory_is_used_without_opt_in(tmp_path, monkeypatch):
     from adaptive_strategy import AdaptiveCoordinator, DisabledAdaptiveCoordinator
 
+    monkeypatch.setattr("adaptive_strategy._DEFAULT_DOTENV_PATH", tmp_path / "missing.env")
     monkeypatch.delenv("ARENA_HERO_ADAPTIVE", raising=False)
     monkeypatch.delenv("ARENA_HERO_LLM_API_KEY", raising=False)
     coordinator = AdaptiveCoordinator.from_env()
     assert isinstance(coordinator, DisabledAdaptiveCoordinator)
     assert coordinator.current_profile() == StrategyProfile.default()
+    coordinator.close()
+
+
+def test_load_dotenv_reads_arena_settings_without_overriding_process_env(tmp_path, monkeypatch):
+    from adaptive_strategy import load_dotenv
+
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "\ufeff# local-only settings\n"
+        "export ARENA_HERO_ADAPTIVE = 1\n"
+        "ARENA_HERO_LLM_API_KEY='file-secret'\n"
+        "ARENA_HERO_LLM_BASE_URL=\"https://llm.example/v1#stable\"\n"
+        "ARENA_HERO_ADAPTIVE_INTERVAL_TICKS=30 # comment\n"
+        "NOT_ARENA_SETTING=should-not-load\n"
+        "ARENA_HERO_BROKEN='unterminated\n"
+        "ARENA_HERO_NUL=bad\x00value\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "ARENA_HERO_ADAPTIVE",
+        "ARENA_HERO_LLM_API_KEY",
+        "ARENA_HERO_LLM_BASE_URL",
+        "ARENA_HERO_ADAPTIVE_INTERVAL_TICKS",
+        "NOT_ARENA_SETTING",
+        "ARENA_HERO_BROKEN",
+        "ARENA_HERO_NUL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ARENA_HERO_LLM_API_KEY", "process-secret")
+
+    load_dotenv(dotenv)
+
+    assert os.environ["ARENA_HERO_ADAPTIVE"] == "1"
+    assert os.environ["ARENA_HERO_LLM_API_KEY"] == "process-secret"
+    assert os.environ["ARENA_HERO_LLM_BASE_URL"] == "https://llm.example/v1#stable"
+    assert os.environ["ARENA_HERO_ADAPTIVE_INTERVAL_TICKS"] == "30"
+    assert "NOT_ARENA_SETTING" not in os.environ
+    assert "ARENA_HERO_BROKEN" not in os.environ
+    assert "ARENA_HERO_NUL" not in os.environ
+
+
+def test_env_factory_loads_an_explicit_dotenv_file_and_keeps_optional_defaults(
+    tmp_path, monkeypatch
+):
+    from adaptive_strategy import AdaptiveCoordinator, DisabledAdaptiveCoordinator
+
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "ARENA_HERO_ADAPTIVE=true\n"
+        "ARENA_HERO_LLM_API_KEY=llm-file-key\n"
+        "ARENA_HERO_EVALUATOR_MODEL=critic-file\n"
+        "ARENA_HERO_DESIGNER_MODEL=designer-file\n"
+        "ARENA_HERO_LLM_BASE_URL=\n"
+        f"ARENA_HERO_ADAPTIVE_STATE_DIR={tmp_path / 'state'}\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "ARENA_HERO_ADAPTIVE",
+        "ARENA_HERO_LLM_API_KEY",
+        "ARENA_HERO_EVALUATOR_MODEL",
+        "ARENA_HERO_DESIGNER_MODEL",
+        "ARENA_HERO_LLM_BASE_URL",
+        "ARENA_HERO_ADAPTIVE_STATE_DIR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    coordinator = AdaptiveCoordinator.from_env(dotenv)
+    assert isinstance(coordinator, AdaptiveCoordinator)
+    assert not isinstance(coordinator, DisabledAdaptiveCoordinator)
+    assert coordinator.transport.api_key == "llm-file-key"
+    assert coordinator.evaluator_model == "critic-file"
+    assert coordinator.designer_model == "designer-file"
+    assert coordinator.transport.base_url == "https://api.openai.com/v1"
+    assert coordinator.state_dir == tmp_path / "state"
     coordinator.close()
 
 

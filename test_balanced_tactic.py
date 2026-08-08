@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
+
 from arena_hero import Direction, UnitType, unit_cost
 from arena_hero.models import UnitView
 
@@ -539,11 +541,37 @@ def test_load_api_key_prefers_environment_without_printing(monkeypatch) -> None:
     assert load_api_key() == "secret-test-key"
 
 
-def test_load_api_key_prompts_when_environment_is_empty(monkeypatch) -> None:
+def test_load_api_key_prompts_when_environment_is_empty(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("ARENA_HERO_API_KEY", raising=False)
+    monkeypatch.setattr("adaptive_strategy._DEFAULT_DOTENV_PATH", tmp_path / "missing.env")
     monkeypatch.setattr("balanced_tactic.getpass", lambda prompt: "prompted-key")
 
     assert load_api_key() == "prompted-key"
+
+
+def test_load_api_key_reads_an_explicit_dotenv_file(tmp_path, monkeypatch) -> None:
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("ARENA_HERO_API_KEY=dotenv-key\n", encoding="utf-8")
+    monkeypatch.delenv("ARENA_HERO_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "balanced_tactic.getpass",
+        lambda prompt: pytest.fail(f"unexpected prompt: {prompt}"),
+    )
+
+    assert load_api_key(dotenv) == "dotenv-key"
+
+
+def test_load_api_key_uses_the_project_dotenv_by_default(tmp_path, monkeypatch) -> None:
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("ARENA_HERO_API_KEY=default-dotenv-key\n", encoding="utf-8")
+    monkeypatch.delenv("ARENA_HERO_API_KEY", raising=False)
+    monkeypatch.setattr("adaptive_strategy._DEFAULT_DOTENV_PATH", dotenv)
+    monkeypatch.setattr(
+        "balanced_tactic.getpass",
+        lambda prompt: pytest.fail(f"unexpected prompt: {prompt}"),
+    )
+
+    assert load_api_key() == "default-dotenv-key"
 
 
 def test_play_submits_one_complete_plan_for_each_turn(monkeypatch, capsys) -> None:

@@ -41,6 +41,98 @@ _MAX_PROMPT_RECORDS = 24
 _MAX_PROMPT_CHARS = 12_000
 MAX_LLM_RESPONSE_BYTES = 1_000_000
 MAX_MODEL_TEXT_CHARS = 4_000
+_DOTENV_PREFIX = "ARENA_HERO_"
+_DOTENV_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+_DEFAULT_DOTENV_PATH = Path(__file__).resolve().parent / ".env"
+
+
+def _decode_dotenv_quoted(value: str, quote: str) -> str:
+    """Decode only the small escape set useful in a local dotenv file."""
+
+    decoded: list[str] = []
+    index = 0
+    escapes = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", '"': '"'}
+    while index < len(value):
+        char = value[index]
+        if char == "\\" and index + 1 < len(value):
+            next_char = value[index + 1]
+            if next_char == quote or next_char in escapes:
+                decoded.append(escapes.get(next_char, next_char))
+                index += 2
+                continue
+        decoded.append(char)
+        index += 1
+    return "".join(decoded)
+
+
+def _parse_dotenv_value(raw: str) -> str | None:
+    value = raw.strip()
+    if not value:
+        return ""
+    if value[0] in {"'", '"'}:
+        quote = value[0]
+        escaped = False
+        closing: int | None = None
+        for index in range(1, len(value)):
+            char = value[index]
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == quote:
+                closing = index
+                break
+        if closing is None:
+            return None
+        trailing = value[closing + 1 :].strip()
+        if trailing and not trailing.startswith("#"):
+            return None
+        return _decode_dotenv_quoted(value[1:closing], quote)
+
+    for index, char in enumerate(value):
+        if char == "#" and index > 0 and value[index - 1].isspace():
+            value = value[:index].rstrip()
+            break
+    return value
+
+
+def load_dotenv(path: Path | str | None = None) -> None:
+    """Load local ``ARENA_HERO_*`` settings without overriding the process.
+
+    This deliberately implements only the safe, small dotenv subset needed by
+    the tactic. It never expands variables or executes shell syntax. Missing,
+    malformed, or unreadable files are ignored so configuration cannot stop a
+    deterministic game loop.
+    """
+
+    try:
+        dotenv_path = Path(path) if path is not None else _DEFAULT_DOTENV_PATH
+        contents = dotenv_path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError, TypeError, ValueError):
+        return
+
+    for raw_line in contents.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        if line.startswith("export") and (len(line) == 6 or line[6].isspace()):
+            line = line[6:].lstrip()
+        match = _DOTENV_KEY.match(line)
+        if match is None:
+            continue
+        key, raw_value = match.groups()
+        if not key.startswith(_DOTENV_PREFIX):
+            continue
+        parsed = _parse_dotenv_value(raw_value)
+        if parsed:
+            try:
+                os.environ.setdefault(key, parsed)
+            except (TypeError, ValueError):
+                # Invalid environment values (for example an embedded NUL)
+                # must not make startup fail.
+                continue
 
 
 def _json_value(value: Any) -> Any:
@@ -613,13 +705,15 @@ class AdaptiveCoordinator:
         self._load_state()
 
     @classmethod
-    def from_env(cls):
+    def from_env(cls, env_path: Path | str | None = None):
         """Build an opt-in coordinator, or a zero-cost disabled observer.
 
         Arena Hero's game credential is intentionally not reused for the LLM.
         Missing or malformed adaptive settings fail closed so the deterministic
         planner remains usable in ordinary CLI sessions.
         """
+
+        load_dotenv(env_path)
 
         enabled = os.environ.get("ARENA_HERO_ADAPTIVE", "").strip().lower() in {
             "1", "true", "yes", "on"
@@ -646,12 +740,14 @@ class AdaptiveCoordinator:
         auto_apply = os.environ.get("ARENA_HERO_ADAPTIVE_AUTO_APPLY", "1").strip().lower() in {
             "1", "true", "yes", "on"
         }
+        base_url = os.environ.get("ARENA_HERO_LLM_BASE_URL", "").strip() or "https://api.openai.com/v1"
+        state_dir = os.environ.get("ARENA_HERO_ADAPTIVE_STATE_DIR", "").strip() or ".codex_tmp/adaptive"
         return cls(
             transport=OpenAICompatibleTransport(
-                os.environ.get("ARENA_HERO_LLM_BASE_URL", "https://api.openai.com/v1"),
+                base_url,
                 llm_key,
             ),
-            state_dir=os.environ.get("ARENA_HERO_ADAPTIVE_STATE_DIR", ".codex_tmp/adaptive"),
+            state_dir=state_dir,
             interval_ticks=_integer("ARENA_HERO_ADAPTIVE_INTERVAL_TICKS", 60),
             min_seconds=max(0.0, _number("ARENA_HERO_ADAPTIVE_MIN_SECONDS", 900.0)),
             evaluator_model=evaluator,
@@ -865,4 +961,5 @@ __all__ = [
     "Scorecard",
     "TelemetryStore",
     "TurnTelemetry",
+    "load_dotenv",
 ]

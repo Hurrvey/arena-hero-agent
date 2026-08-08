@@ -2518,7 +2518,13 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     return None
 
 
-def load_api_key() -> str:
+def load_api_key(env_path=None) -> str:
+    # Keep dotenv optional and lazy so importing the deterministic planner has
+    # no configuration side effects. Explicit process variables win over file
+    # values, and the loader fails open on a missing local file.
+    from adaptive_strategy import load_dotenv
+
+    load_dotenv(env_path)
     return os.environ.get("ARENA_HERO_API_KEY") or getpass("Arena Hero API key: ")
 
 
