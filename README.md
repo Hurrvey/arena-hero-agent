@@ -65,6 +65,16 @@ python .\balanced_tactic.py
 有意的安全设计），只需在本机重新创建或复制自己的配置即可。默认读取的是
 仓库（脚本）目录下的 `.env`；空值按未设置处理。
 
+如果你刚编辑了 `.env`，但仍收到 `AuthenticationError`，先清除当前 PowerShell
+会话里可能残留的旧值，再启动一次：
+
+~~~powershell
+Remove-Item Env:ARENA_HERO_API_KEY -ErrorAction SilentlyContinue
+python .\balanced_tactic.py
+~~~
+
+这是一次性清理；之后程序会继续从 `.env` 读取，不需要重新声明 key。
+
 ### 推荐：运行时隐藏输入
 
 直接启动脚本：
