@@ -441,6 +441,8 @@ def test_env_factory_loads_an_explicit_dotenv_file_and_keeps_optional_defaults(
         "ARENA_HERO_LLM_API_KEY=llm-file-key\n"
         "ARENA_HERO_EVALUATOR_MODEL=critic-file\n"
         "ARENA_HERO_DESIGNER_MODEL=designer-file\n"
+        "ARENA_HERO_LLM_MODEL_VERBOSITY=HIGH\n"
+        "ARENA_HERO_LLM_MODEL_REASONING_EFFORT=xhigh\n"
         "ARENA_HERO_LLM_BASE_URL=\n"
         f"ARENA_HERO_ADAPTIVE_STATE_DIR={tmp_path / 'state'}\n",
         encoding="utf-8",
@@ -450,10 +452,13 @@ def test_env_factory_loads_an_explicit_dotenv_file_and_keeps_optional_defaults(
         "ARENA_HERO_LLM_API_KEY",
         "ARENA_HERO_EVALUATOR_MODEL",
         "ARENA_HERO_DESIGNER_MODEL",
+        "ARENA_HERO_LLM_MODEL_VERBOSITY",
+        "ARENA_HERO_LLM_MODEL_REASONING_EFFORT",
         "ARENA_HERO_LLM_BASE_URL",
         "ARENA_HERO_ADAPTIVE_STATE_DIR",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ARENA_HERO_LLM_MODEL_VERBOSITY", "low")
 
     coordinator = AdaptiveCoordinator.from_env(dotenv)
     assert isinstance(coordinator, AdaptiveCoordinator)
@@ -462,7 +467,40 @@ def test_env_factory_loads_an_explicit_dotenv_file_and_keeps_optional_defaults(
     assert coordinator.evaluator_model == "critic-file"
     assert coordinator.designer_model == "designer-file"
     assert coordinator.transport.base_url == "https://api.openai.com/v1"
+    assert coordinator.transport.model_verbosity == "low"
+    assert coordinator.transport.model_reasoning_effort == "xhigh"
     assert coordinator.state_dir == tmp_path / "state"
+    coordinator.close()
+
+
+def test_env_factory_ignores_invalid_optional_model_controls(tmp_path, monkeypatch):
+    from adaptive_strategy import AdaptiveCoordinator
+
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "ARENA_HERO_ADAPTIVE=1\n"
+        "ARENA_HERO_LLM_API_KEY=llm-file-key\n"
+        "ARENA_HERO_EVALUATOR_MODEL=critic\n"
+        "ARENA_HERO_DESIGNER_MODEL=designer\n"
+        "ARENA_HERO_LLM_MODEL_VERBOSITY=novel-length\n"
+        "ARENA_HERO_LLM_MODEL_REASONING_EFFORT=maximum-ish\n"
+        f"ARENA_HERO_ADAPTIVE_STATE_DIR={tmp_path / 'state'}\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "ARENA_HERO_ADAPTIVE",
+        "ARENA_HERO_LLM_API_KEY",
+        "ARENA_HERO_EVALUATOR_MODEL",
+        "ARENA_HERO_DESIGNER_MODEL",
+        "ARENA_HERO_LLM_MODEL_VERBOSITY",
+        "ARENA_HERO_LLM_MODEL_REASONING_EFFORT",
+        "ARENA_HERO_ADAPTIVE_STATE_DIR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    coordinator = AdaptiveCoordinator.from_env(dotenv)
+    assert coordinator.transport.model_verbosity is None
+    assert coordinator.transport.model_reasoning_effort is None
     coordinator.close()
 
 
@@ -504,6 +542,112 @@ def test_openai_transport_rejects_malformed_choices_without_leaking_details(monk
         OpenAICompatibleTransport("https://example.invalid/v1", "top-secret").complete(
             model="m", system="s", user="u"
         )
+
+
+def test_openai_transport_sends_model_verbosity_and_reasoning_effort(monkeypatch):
+    from adaptive_strategy import OpenAICompatibleTransport
+
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, *args):
+            return b'{"choices":[{"message":{"content":"{}"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("adaptive_strategy.urlrequest.urlopen", fake_urlopen)
+    transport = OpenAICompatibleTransport(
+        "https://example.invalid/v1",
+        "top-secret",
+        model_verbosity="HIGH",
+        model_reasoning_effort="xhigh",
+    )
+
+    assert transport.complete(model="m", system="s", user="u") == "{}"
+    assert captured["payload"]["verbosity"] == "high"
+    assert captured["payload"]["reasoning_effort"] == "xhigh"
+    assert "temperature" not in captured["payload"]
+    assert captured["timeout"] == 30.0
+
+
+def test_openai_transport_rejects_invalid_direct_model_controls():
+    from adaptive_strategy import OpenAICompatibleTransport
+
+    with pytest.raises(ValueError, match="model_verbosity"):
+        OpenAICompatibleTransport(
+            "https://example.invalid/v1", "secret", model_verbosity="verbose"
+        )
+    with pytest.raises(ValueError, match="model_reasoning_effort"):
+        OpenAICompatibleTransport(
+            "https://example.invalid/v1",
+            "secret",
+            model_reasoning_effort="maximum",
+        )
+
+
+def test_openai_transport_keeps_legacy_temperature_when_controls_are_unset(monkeypatch):
+    from adaptive_strategy import OpenAICompatibleTransport
+
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, *args):
+            return b'{"choices":[{"message":{"content":"{}"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr("adaptive_strategy.urlrequest.urlopen", fake_urlopen)
+    transport = OpenAICompatibleTransport("https://example.invalid/v1", "secret")
+
+    assert transport.complete(model="m", system="s", user="u") == "{}"
+    assert captured["payload"]["temperature"] == 0
+    assert "verbosity" not in captured["payload"]
+    assert "reasoning_effort" not in captured["payload"]
+
+
+def test_openai_transport_omits_temperature_for_verbosity_only(monkeypatch):
+    from adaptive_strategy import OpenAICompatibleTransport
+
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, *args):
+            return b'{"choices":[{"message":{"content":"{}"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr("adaptive_strategy.urlrequest.urlopen", fake_urlopen)
+    OpenAICompatibleTransport(
+        "https://example.invalid/v1", "secret", model_verbosity="high"
+    ).complete(model="m", system="s", user="u")
+
+    assert captured["payload"]["verbosity"] == "high"
+    assert "temperature" not in captured["payload"]
 
 
 def test_cycle_bounds_untrusted_records_before_llm_prompt(tmp_path, monkeypatch):

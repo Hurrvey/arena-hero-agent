@@ -41,6 +41,10 @@ _MAX_PROMPT_RECORDS = 24
 _MAX_PROMPT_CHARS = 12_000
 MAX_LLM_RESPONSE_BYTES = 1_000_000
 MAX_MODEL_TEXT_CHARS = 4_000
+_MODEL_VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
+_MODEL_REASONING_EFFORT_VALUES = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh"}
+)
 _DOTENV_PREFIX = "ARENA_HERO_"
 _DOTENV_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 _DEFAULT_DOTENV_PATH = Path(__file__).resolve().parent / ".env"
@@ -133,6 +137,33 @@ def load_dotenv(path: Path | str | None = None) -> None:
                 # Invalid environment values (for example an embedded NUL)
                 # must not make startup fail.
                 continue
+
+
+def _normalize_model_control(
+    value: str | None, name: str, allowed: frozenset[str]
+) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if normalized not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of: {choices}")
+    return normalized
+
+
+def _model_control_from_env(
+    name: str, allowed: frozenset[str]
+) -> str | None:
+    try:
+        return _normalize_model_control(os.environ.get(name), name, allowed)
+    except ValueError:
+        # A bad optional tuning knob must not disable the deterministic tactic
+        # or prevent the evaluator/designer cycle from starting.
+        return None
 
 
 def _json_value(value: Any) -> Any:
@@ -524,21 +555,45 @@ class LLMTransport(Protocol):
 class OpenAICompatibleTransport:
     """Minimal OpenAI chat-completions adapter using only urllib."""
 
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        model_verbosity: str | None = None,
+        model_reasoning_effort: str | None = None,
+    ):
         self.base_url = str(base_url).rstrip("/")
         self.api_key = str(api_key)
+        self.model_verbosity = _normalize_model_control(
+            model_verbosity, "model_verbosity", _MODEL_VERBOSITY_VALUES
+        )
+        self.model_reasoning_effort = _normalize_model_control(
+            model_reasoning_effort,
+            "model_reasoning_effort",
+            _MODEL_REASONING_EFFORT_VALUES,
+        )
 
     def complete(self, *, model: str, system: str, user: str,
                  timeout: float | None = None) -> str:
         limit = 30.0 if timeout is None else float(timeout)
         if not math.isfinite(limit) or limit <= 0:
             raise LLMError("invalid timeout")
-        payload = json.dumps({
+        request_payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
-            "temperature": 0,
-        }).encode("utf-8")
+        }
+        if self.model_verbosity is not None:
+            request_payload["verbosity"] = self.model_verbosity
+        if self.model_reasoning_effort is not None:
+            request_payload["reasoning_effort"] = self.model_reasoning_effort
+        # New model controls commonly accompany models that reject
+        # temperature; retain the previous deterministic setting only when
+        # neither optional control was requested.
+        if self.model_verbosity is None and self.model_reasoning_effort is None:
+            request_payload["temperature"] = 0
+        payload = json.dumps(request_payload).encode("utf-8")
         req = urlrequest.Request(
             self.base_url + "/chat/completions", data=payload,
             headers={"Content-Type": "application/json",
@@ -742,10 +797,19 @@ class AdaptiveCoordinator:
         }
         base_url = os.environ.get("ARENA_HERO_LLM_BASE_URL", "").strip() or "https://api.openai.com/v1"
         state_dir = os.environ.get("ARENA_HERO_ADAPTIVE_STATE_DIR", "").strip() or ".codex_tmp/adaptive"
+        model_verbosity = _model_control_from_env(
+            "ARENA_HERO_LLM_MODEL_VERBOSITY", _MODEL_VERBOSITY_VALUES
+        )
+        model_reasoning_effort = _model_control_from_env(
+            "ARENA_HERO_LLM_MODEL_REASONING_EFFORT",
+            _MODEL_REASONING_EFFORT_VALUES,
+        )
         return cls(
             transport=OpenAICompatibleTransport(
                 base_url,
                 llm_key,
+                model_verbosity=model_verbosity,
+                model_reasoning_effort=model_reasoning_effort,
             ),
             state_dir=state_dir,
             interval_ticks=_integer("ARENA_HERO_ADAPTIVE_INTERVAL_TICKS", 60),

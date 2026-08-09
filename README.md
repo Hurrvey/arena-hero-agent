@@ -136,6 +136,8 @@ LLM 凭据必须与 Arena Hero 的 `ARENA_HERO_API_KEY` 分开。上面的本地
 ARENA_HERO_ADAPTIVE=1
 ARENA_HERO_LLM_API_KEY=独立的_LLM_API_KEY
 ARENA_HERO_LLM_BASE_URL=https://api.openai.com/v1
+ARENA_HERO_LLM_MODEL_VERBOSITY=high
+ARENA_HERO_LLM_MODEL_REASONING_EFFORT=high
 ARENA_HERO_EVALUATOR_MODEL=评估模型名
 ARENA_HERO_DESIGNER_MODEL=重设计模型名
 ARENA_HERO_ADAPTIVE_INTERVAL_TICKS=60
@@ -153,6 +155,8 @@ ARENA_HERO_ADAPTIVE_STATE_DIR=.codex_tmp/adaptive
 $env:ARENA_HERO_ADAPTIVE="1"
 $env:ARENA_HERO_LLM_API_KEY="独立的_LLM_API_KEY"
 $env:ARENA_HERO_LLM_BASE_URL="https://api.openai.com/v1"
+$env:ARENA_HERO_LLM_MODEL_VERBOSITY="high"
+$env:ARENA_HERO_LLM_MODEL_REASONING_EFFORT="high"
 $env:ARENA_HERO_EVALUATOR_MODEL="评估模型名"
 $env:ARENA_HERO_DESIGNER_MODEL="重设计模型名"
 $env:ARENA_HERO_ADAPTIVE_INTERVAL_TICKS="60"
@@ -163,7 +167,7 @@ $env:ARENA_HERO_ADAPTIVE_STATE_DIR=".codex_tmp/adaptive"
 python .\balanced_tactic.py
 ~~~
 
-`ARENA_HERO_LLM_BASE_URL` 需要指向 OpenAI-compatible 的版本根路径（例如 `/v1`）；程序会请求其 `/chat/completions`。评估模型和重设计模型可以是同一个模型，也可以分别指定。缺少 `ARENA_HERO_ADAPTIVE=1`、独立 LLM key 或任一模型名时，自适应功能安全关闭，原有战术行为不变。将 `ARENA_HERO_ADAPTIVE_AUTO_APPLY` 设为 `0` 可先观察报告而不自动采用候选 profile。
+`ARENA_HERO_LLM_BASE_URL` 需要指向 OpenAI-compatible 的版本根路径（例如 `/v1`）；程序会请求其 `/chat/completions`。`ARENA_HERO_LLM_MODEL_VERBOSITY` 支持 `low`、`medium`、`high`；`ARENA_HERO_LLM_MODEL_REASONING_EFFORT` 支持 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`，但具体模型/供应商可能支持更窄的集合。两项都留空时不会把对应字段发送给供应商并保留旧的 `temperature=0`；设置任一项后会省略 `temperature`，避免新模型拒绝不兼容参数。评估模型和重设计模型可以是同一个模型，也可以分别指定。缺少 `ARENA_HERO_ADAPTIVE=1`、独立 LLM key 或任一模型名时，自适应功能安全关闭，原有战术行为不变。将 `ARENA_HERO_ADAPTIVE_AUTO_APPLY` 设为 `0` 可先观察报告而不自动采用候选 profile。
 
 运行态 `telemetry.jsonl`、周期报告和 `state.json` 默认位于 `.codex_tmp/adaptive/`，已被 `.gitignore` 排除。规则包每个周期重新读取并计算指纹，因此更新本地 arena-hero skill 后，下一轮评估会使用新规则；旧规则的模型输出不会通过指纹校验。
 
