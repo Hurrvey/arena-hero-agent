@@ -26,6 +26,8 @@ def _minimal_skill_root(root: Path) -> Path:
         "reference-numbers.md",
         "reference-glossary.md",
         "tactic-authoring.md",
+        "sdk-quickstart.md",
+        "sdk-reference.md",
         "reference-source-and-version.md",
         "api-resolution-results.md",
     ):
@@ -190,6 +192,53 @@ def test_skill_bundle_wraps_invalid_utf8_as_skill_bundle_error(tmp_path):
     (root / "SKILL.md").write_bytes(b"\xff")
     with pytest.raises(SkillBundleError):
         SkillBundle.load(root)
+
+
+def test_default_skill_bundle_loads_the_project_packet():
+    from adaptive_strategy import SkillBundle, _PROJECT_SKILL_ROOT
+
+    bundle = SkillBundle.load()
+
+    assert _PROJECT_SKILL_ROOT == Path(__file__).resolve().parent / "skills" / "arena-hero"
+    assert "Arena Hero v0.14 game rules" in bundle.prompt_text
+    assert "SDK |" in bundle.prompt_text
+
+
+def test_project_skill_packet_precedes_legacy_user_roots(tmp_path, monkeypatch):
+    from adaptive_strategy import SkillBundle, _PROJECT_SKILL_ROOT
+
+    legacy = _minimal_skill_root(tmp_path / "legacy")
+    (legacy / "SKILL.md").write_text("legacy marker", encoding="utf-8")
+    monkeypatch.setattr("adaptive_strategy._LEGACY_SKILL_ROOTS", (legacy,))
+
+    bundle = SkillBundle.load()
+
+    assert _PROJECT_SKILL_ROOT.exists()
+    assert "legacy marker" not in bundle.prompt_text
+
+
+def test_both_llm_roles_receive_same_project_skill_fingerprint(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator, SkillBundle
+
+    fingerprint = SkillBundle.load().fingerprint
+    transport = FakeTransport([
+        _evaluation_json(fingerprint),
+        _designer_json(worker_target=18, skill_fingerprint=fingerprint),
+    ])
+    coordinator = AdaptiveCoordinator(
+        transport=transport,
+        state_dir=tmp_path,
+        interval_ticks=1,
+        min_seconds=0,
+        auto_apply=False,
+    )
+    coordinator.ingest_record({"tick": 1, "events": []})
+
+    coordinator.run_cycle()
+
+    assert len(transport.calls) == 2
+    assert all(fingerprint in call.system for call in transport.calls)
+    coordinator.close()
 
 
 def test_telemetry_store_appends_queries_and_writes_atomic_report(tmp_path):

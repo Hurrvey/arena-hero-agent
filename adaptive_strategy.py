@@ -32,8 +32,15 @@ _SKILL_FILES = (
     "references/reference-numbers.md",
     "references/reference-glossary.md",
     "references/tactic-authoring.md",
+    "references/sdk-quickstart.md",
+    "references/sdk-reference.md",
     "references/reference-source-and-version.md",
     "references/api-resolution-results.md",
+)
+_PROJECT_SKILL_ROOT = Path(__file__).resolve().parent / "skills" / "arena-hero"
+_LEGACY_SKILL_ROOTS = (
+    Path.home() / ".codex" / "skills" / "arena-hero-skill",
+    Path.home() / ".agents" / "skills" / "arena-hero-skill",
 )
 _OMIT = object()
 _MAX_TELEMETRY_STRING = 512
@@ -472,11 +479,16 @@ class SkillBundle:
     @classmethod
     def load(cls, root: Path | None = None) -> "SkillBundle":
         if root is None:
-            candidates = [
-                Path.home() / ".codex" / "skills" / "arena-hero-skill",
-                Path.home() / ".agents" / "skills" / "arena-hero-skill",
-            ]
-            root = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+            # A repository checkout must be self-contained and reproducible.
+            # If the project packet exists, validate that one root in full;
+            # never fill missing files from a different user-level install.
+            if _PROJECT_SKILL_ROOT.exists():
+                root = _PROJECT_SKILL_ROOT
+            else:
+                root = next(
+                    (candidate for candidate in _LEGACY_SKILL_ROOTS if candidate.exists()),
+                    _PROJECT_SKILL_ROOT,
+                )
         root = Path(root)
         contents: list[tuple[str, bytes]] = []
         for relative in _SKILL_FILES:
