@@ -249,14 +249,205 @@ def _event_mapping(event: Any) -> dict[str, Any]:
     return _selected(event, fields)
 
 
+_ECONOMY_COUNT_FIELDS = (
+    "visible_resource_count",
+    "idle_worker_ticks",
+    "route_stalls",
+    "oscillation_ticks",
+    "runner_progress_ticks",
+)
+_SAFE_EVENT_VALUE_FIELDS = (
+    "amount",
+    "damage",
+    "targets_hit",
+    "cost",
+    "required",
+    "capacity",
+    "remaining",
+    "hp",
+)
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    if type(value) is not int or value < 0:
+        return None
+    return value
+
+
+def _economy_mapping(diagnostics: Any) -> dict[str, Any]:
+    """Whitelist bounded aggregate economy diagnostics.
+
+    Targets, positions, and object identifiers are intentionally not accepted
+    here.  The deterministic tactic may retain those locally, but neither LLM
+    role needs them to judge economic progress.
+    """
+
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for name in _ECONOMY_COUNT_FIELDS:
+        value = _nonnegative_int(diagnostics.get(name))
+        if value is not None:
+            result[name] = value
+    raw_modes = diagnostics.get("worker_modes")
+    if isinstance(raw_modes, Mapping):
+        modes: dict[str, int] = {}
+        for raw_name, raw_count in raw_modes.items():
+            if not isinstance(raw_name, str):
+                continue
+            name = raw_name.strip().upper()
+            count = _nonnegative_int(raw_count)
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,31}", name) or count is None:
+                continue
+            modes[name] = count
+        if modes:
+            result["worker_modes"] = dict(sorted(modes.items()))
+    return result
+
+
+def _safe_label(value: Any) -> str | None:
+    if isinstance(value, Enum):
+        value = value.value
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", normalized):
+        return None
+    return normalized
+
+
+def _count_kinds(items: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not isinstance(items, (list, tuple)):
+        return counts
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        label = _safe_label(item.get("unit_type") or item.get("kind")) or "UNKNOWN"
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _prompt_plan(plan: Any) -> dict[str, Any]:
+    if not isinstance(plan, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    core_action = plan.get("core_action")
+    if isinstance(core_action, Mapping):
+        label = _safe_label(core_action.get("action_type") or core_action.get("type"))
+        if label is not None:
+            result["core_action"] = label
+    unit_actions = plan.get("unit_actions")
+    if isinstance(unit_actions, Mapping):
+        action_rows = unit_actions.values()
+    elif isinstance(unit_actions, (list, tuple)):
+        action_rows = unit_actions
+    else:
+        action_rows = ()
+    counts: dict[str, int] = {}
+    for action in action_rows:
+        if not isinstance(action, Mapping):
+            continue
+        label = _safe_label(action.get("action_type") or action.get("type")) or "UNKNOWN"
+        counts[label] = counts.get(label, 0) + 1
+    if counts:
+        result["unit_action_counts"] = dict(sorted(counts.items()))
+    return result
+
+
+def _prompt_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Reduce one local record to the aggregates needed by the LLM roles."""
+
+    result: dict[str, Any] = {}
+    tick = _nonnegative_int(record.get("tick"))
+    if tick is not None:
+        result["tick"] = tick
+    state = record.get("state")
+    if isinstance(state, Mapping):
+        selected = _selected(
+            state,
+            ("status", "resources", "resource_capacity", "resource_space", "population"),
+        )
+        if selected:
+            result["state"] = selected
+    core = record.get("core")
+    if isinstance(core, Mapping):
+        selected = _selected(
+            core,
+            ("kind", "controlled", "hp", "shield", "state", "move_progress", "move_required_ticks"),
+        )
+        if selected:
+            result["core"] = selected
+    unit_counts = _count_kinds(record.get("units"))
+    if unit_counts:
+        result["unit_counts"] = unit_counts
+    enemy_counts = _count_kinds(record.get("visible_enemies"))
+    if enemy_counts:
+        result["visible_enemy_counts"] = enemy_counts
+    beacon = record.get("beacon")
+    if isinstance(beacon, Mapping):
+        selected = _selected(beacon, ("status", "controlled"))
+        if selected:
+            result["beacon"] = selected
+    profile = record.get("profile")
+    if isinstance(profile, Mapping):
+        allowed = set(StrategyProfile.default().to_mapping())
+        selected = {
+            name: value
+            for name, value in profile.items()
+            if name in allowed and isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        if selected:
+            result["profile"] = selected
+    acceptance = record.get("acceptance")
+    if isinstance(acceptance, Mapping):
+        selected = _selected(acceptance, ("accepted", "tick"))
+        if selected:
+            result["acceptance"] = selected
+    plan = _prompt_plan(record.get("plan"))
+    if plan:
+        result["plan"] = plan
+    events: list[dict[str, Any]] = []
+    for event in record.get("events", ()) or ():
+        if not isinstance(event, Mapping):
+            continue
+        event_type = _safe_label(event.get("event_type"))
+        if event_type is None:
+            continue
+        safe_event: dict[str, Any] = {"event_type": event_type}
+        reason = _safe_label(event.get("reason_code"))
+        if reason is not None:
+            safe_event["reason_code"] = reason
+        values = event.get("values")
+        if isinstance(values, Mapping):
+            safe_values = {
+                name: value
+                for name in _SAFE_EVENT_VALUE_FIELDS
+                if (
+                    (value := values.get(name)) is not None
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and math.isfinite(float(value))
+                )
+            }
+            if safe_values:
+                safe_event["values"] = safe_values
+        events.append(safe_event)
+    if events:
+        result["events"] = events
+    economy = _economy_mapping(record.get("economy"))
+    if economy:
+        result["economy"] = economy
+    return result
+
+
 def _bounded_prompt_records(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
     """Return a bounded, explicitly untrusted record list for LLM prompts."""
 
     safe_records: list[dict[str, Any]] = []
     for record in records[-_MAX_PROMPT_RECORDS:]:
-        converted = _json_value(record)
-        if isinstance(converted, Mapping):
-            safe_records.append(dict(converted))
+        if isinstance(record, Mapping):
+            safe_records.append(_prompt_record(record))
     payload = {"untrusted": True, "records": safe_records}
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     truncated = len(records) > len(safe_records)
@@ -272,7 +463,13 @@ class TurnTelemetry:
     """Build a stable, redacted JSON record from one authoritative Turn."""
 
     @staticmethod
-    def from_turn(turn: Any, accepted: Any, profile: StrategyProfile) -> dict[str, object]:
+    def from_turn(
+        turn: Any,
+        accepted: Any,
+        profile: StrategyProfile,
+        *,
+        diagnostics: Mapping[str, Any] | None = None,
+    ) -> dict[str, object]:
         state = getattr(turn, "state", None)
         state_fields = ("status", "respawn_at_tick", "resources", "population")
         state_record = _selected(state, state_fields)
@@ -333,6 +530,9 @@ class TurnTelemetry:
             converted = _json_value(plan_map)
             if converted is not _OMIT:
                 result["plan"] = converted
+        economy = _economy_mapping(diagnostics)
+        if economy:
+            result["economy"] = economy
         return result
 
 
@@ -379,6 +579,11 @@ class Scorecard:
     overflow_destroyed: float = 0
     recoveries: int = 0
     ticks_observed: int = 0
+    zero_resource_ticks: int = 0
+    idle_worker_ticks: int = 0
+    route_stalls: int = 0
+    oscillation_ticks: int = 0
+    runner_progress_ticks: int = 0
     _event_ids: set[str] = field(default_factory=set, repr=False, compare=False)
     _ticks: set[int] = field(default_factory=set, repr=False, compare=False)
 
@@ -390,6 +595,25 @@ class Scorecard:
             beacon = record.get("beacon")
             if isinstance(beacon, Mapping) and beacon.get("status") == "CARRIED" and beacon.get("controlled") is True:
                 self.beacon_ticks_observed += 1
+            state = record.get("state")
+            if (
+                isinstance(state, Mapping)
+                and isinstance(state.get("resources"), (int, float))
+                and not isinstance(state.get("resources"), bool)
+                and math.isfinite(float(state["resources"]))
+                and float(state["resources"]) == 0
+            ):
+                self.zero_resource_ticks += 1
+            economy = _economy_mapping(record.get("economy"))
+            for name in (
+                "idle_worker_ticks",
+                "route_stalls",
+                "oscillation_ticks",
+                "runner_progress_ticks",
+            ):
+                value = economy.get(name)
+                if type(value) is int:
+                    setattr(self, name, getattr(self, name) + value)
         for event in record.get("events", ()) or ():
             if not isinstance(event, Mapping):
                 continue
@@ -457,6 +681,11 @@ class Scorecard:
             "units_lost": self.units_lost,
             "core_losses": self.core_losses,
             "failed_actions": self.failed_actions,
+            "zero_resource_ticks": self.zero_resource_ticks,
+            "idle_worker_ticks": self.idle_worker_ticks,
+            "route_stalls": self.route_stalls,
+            "oscillation_ticks": self.oscillation_ticks,
+            "runner_progress_ticks": self.runner_progress_ticks,
         }
         result = {name: value for name, value in vars(self).items() if not name.startswith("_")}
         result["internal_score"] = internal_score(metrics)
@@ -891,6 +1120,31 @@ class AdaptiveCoordinator:
             # errors must never terminate the live deterministic game loop.
             return
 
+    def observe_snapshot_with_diagnostics(
+        self,
+        turn: Any,
+        accepted: Any,
+        profile: StrategyProfile,
+        diagnostics: Mapping[str, Any],
+    ) -> None:
+        """Persist a Turn plus bounded deterministic planner diagnostics."""
+
+        if self._closed:
+            return
+        try:
+            profile.validate()
+            record = TurnTelemetry.from_turn(
+                turn,
+                accepted,
+                profile,
+                diagnostics=diagnostics,
+            )
+            self.ingest_record(record)
+            if self._due() and (self._future is None or self._future.done()):
+                self._future = self._executor.submit(self.run_cycle)
+        except Exception:
+            return
+
     def observe(self, turn: Any, accepted: Any) -> None:
         """Observe using the current profile for direct callers."""
 
@@ -1017,6 +1271,15 @@ class DisabledAdaptiveCoordinator:
 
     def observe_snapshot(
         self, turn: Any, accepted: Any, profile: StrategyProfile
+    ) -> None:
+        return None
+
+    def observe_snapshot_with_diagnostics(
+        self,
+        turn: Any,
+        accepted: Any,
+        profile: StrategyProfile,
+        diagnostics: Mapping[str, Any],
     ) -> None:
         return None
 

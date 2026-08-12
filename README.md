@@ -6,18 +6,18 @@
 
 ## 项目简介
 
-战术入口位于 **balanced_tactic.py**。脚本不维护跨 Turn 的隐藏目标，也不猜测迷雾中的敌人或资源；每一回合都根据服务器提供的当前状态重新决策。
+战术入口位于 **balanced_tactic.py**。脚本不猜测迷雾中的敌人或 Beacon 归属；每一回合都以服务器提供的当前状态为权威，只把短期资源线索作为会过期、会被当前视野推翻的探索提示。
 
 它使用同步的 ArenaHeroClient 连接 Arena Hero，并且每个 Turn 只提交一次当前计划。API key 只在本地运行时读取，不写入代码或日志。
 
 ## 主要特性
 
-- **Beacon 主目标**：Beacon 坐标始终公开；没有己方 carrier 时固定派 runner 接近它，只有当前状态明确为 `GROUND` 且同格时才拾取。
+- **有边界的 Beacon 任务**：Beacon 坐标始终公开，但未知状态不会立刻抽走经济 Worker。经济达到 6 名 Worker 后才允许远程 runner；当前明确为 `GROUND` 且距离较近时可以机会性抢取。runner 必须持续缩短距离，停滞或 A-B-A-B 往返会被释放并进入冷却。
 - **载体保命与护卫**：只把当前 Turn 明确可见的己方 carrier 当作事实；状态进入迷雾时按未知处理，避免把过期 carrier 当成 10 点 shield cap；可见威胁会触发回 Core、护卫或在 Core 同格预排战后 HEAL。
 - **机会型高分战斗**：Ranger 优先敌方 Beacon carrier、威胁己方 carrier 的单位和敌方 Core，直接目标不足时向由可见敌人一步移动推导的合法空格射击；Vanguard 同理使用预测 Sweep。
-- **Worker 经济循环**：最多优先保留两名 Worker，载体可带货拾取 Beacon；其他 Worker 采集当前可见资源、把货物运回静止 Core，避开可见占位/障碍，并在当前受攻击时撤退。
-- **v0.14 动态生产**：取消旧 upkeep 预算，生产价格使用官方 `unit_cost()`；人口为 2 时先用可容纳的 Vanguard 搭容量桥，人口达到 3 后补 Ranger，再按比例补 Vanguard。
-- **确定性记忆**：只长期记忆永久障碍、runner 意图和去重事件；carrier 仅使用当前可见状态或同 Tick 拾取计划，不把迷雾里的资源、敌人或 Beacon 归属当作当前事实。
+- **Worker 经济与探索**：成熟目标为 23 名 Worker。可见/短期记忆资源通过确定性的最小成本一对一分配；没有资源时，空载 Worker 按八方向递增环分散侦察，不再返回 Core 原地或在两格之间永久往返。载货 Worker 仍优先返航存入，受威胁时撤退。
+- **分阶段扩军**：生产价格使用官方 `unit_cost()`，依次建设 6 Worker → 1 Vanguard → 1 Ranger → 12 Worker → 3 Vanguard → 4 Ranger → 23 Worker，随后按 Ranger 偏重比例继续扩大战斗力；容量不足时选择当前能够容纳的类型。
+- **受约束的确定性记忆**：永久障碍可以长期记忆；资源提示有 64 Tick TTL，路线有停滞阈值和冷却。carrier 仅使用当前可见状态或同 Tick 拾取计划，不把迷雾里的敌人、资源或 Beacon 归属当作当前事实。
 - **确定性决策**：相同状态下使用固定方向顺序和 UUID 排序，减少同局行为漂移。
 
 ## 环境要求
@@ -126,15 +126,16 @@ tick=124 accepted=True
 - accepted=True 表示本回合的计划已被服务接受，不等同于每个行动都命中或本局已经获胜。
 - 脚本进程必须保持运行，关闭 PowerShell 窗口会停止后续计划提交。
 - 按 Ctrl+C 可以停止脚本。
+- 更新 `balanced_tactic.py`、`economic_strategy.py` 或 `skills/arena-hero` 后，正在运行的旧 Python 进程不会热加载修改；请按 Ctrl+C 停止旧进程，再执行同一启动命令。新进程会继续读取本地 `.env`，无需重新声明变量。
 
 ## 可选：双 LLM 自适应评估与重设计
 
 默认情况下脚本只运行确定性的 `balanced_tactic.py`，不会连接任何 LLM。打开自适应模式后，主战术仍然是唯一的行动权威：每个 Turn 先根据当前可见状态生成并提交一份完整计划，提交完成后才把脱敏遥测写入本地队列。到达 Tick/时间间隔后，后台线程才启动两阶段循环：
 
-1. **评估模型**读取本机最新的 `$arena-hero` skill 规则包、上一 Tick 事件和 Beacon/经济/战斗 scorecard，输出缺陷、规则风险和改进建议。
-2. **重设计模型**读取同一份带 SHA-256 指纹的规则包、当前 `StrategyProfile` 和上一步评估，只能输出有限 JSON 参数（Worker 目标、Beacon/经济权重、战斗倾向、载体安全余量等）。它不能提交行动、写 Python、执行 Shell 或读取迷雾信息；系统不会执行 LLM 生成的 Python。
+1. **评估模型**读取仓库内置的 `skills/arena-hero` v0.14 完整规则/SDK 包、聚合事件和 Beacon/经济/战斗 scorecard，输出缺陷、规则风险和改进建议。它会看到零资源 Tick、空闲 Worker、路线停滞、两格振荡和 runner 推进等指标。
+2. **重设计模型**读取完全相同且带 SHA-256 指纹的项目内规则包、当前 `StrategyProfile` 和上一步评估，只能输出有限 JSON 参数（Worker 目标、经济启动规模、Beacon 任务半径/租约、资源 TTL/停滞阈值、战斗倾向、载体安全余量等）。它不能提交行动、写 Python、执行 Shell 或读取迷雾信息；系统不会执行 LLM 生成的 Python。
 
-候选参数会在本地做 schema、范围、规则指纹和 Beacon/经济下限校验，再以 Turn 边界替换配置。后续周期用同一 scorecard 做金丝雀比较；分数按配置比例下降时自动**回滚**到上一份 profile。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。内部 score 只是调参信号，不是官方总榜，也不能保证固定第一名；Arena Hero 的 Beacon、伤害、Core 参与仍是三个独立 lifetime 排行榜。
+候选参数会在本地做 schema、范围、规则指纹和 Beacon/经济下限校验，再以 Turn 边界替换配置。后续周期用同一 scorecard 做金丝雀比较；分数按配置比例下降时自动**回滚**到上一份 profile。LLM 只接收聚合对象/行动计数和事件数值，不接收玩家名、对象 ID、精确坐标或路线目标。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。内部 score 会奖励 Beacon、采集、存入、战斗和 runner 推进，并惩罚零资源停滞、空闲 Worker、卡路与振荡；它只是调参信号，不是官方总榜，也不能保证固定第一名。
 
 ### 本地 `.env` 配置（推荐）
 
@@ -179,7 +180,7 @@ python .\balanced_tactic.py
 
 `ARENA_HERO_LLM_BASE_URL` 需要指向 OpenAI-compatible 的版本根路径（例如 `/v1`）；程序会请求其 `/chat/completions`。`ARENA_HERO_LLM_MODEL_VERBOSITY` 支持 `low`、`medium`、`high`；`ARENA_HERO_LLM_MODEL_REASONING_EFFORT` 支持 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`，但具体模型/供应商可能支持更窄的集合。两项都留空时不会把对应字段发送给供应商并保留旧的 `temperature=0`；设置任一项后会省略 `temperature`，避免新模型拒绝不兼容参数。评估模型和重设计模型可以是同一个模型，也可以分别指定。缺少 `ARENA_HERO_ADAPTIVE=1`、独立 LLM key 或任一模型名时，自适应功能安全关闭，原有战术行为不变。将 `ARENA_HERO_ADAPTIVE_AUTO_APPLY` 设为 `0` 可先观察报告而不自动采用候选 profile。
 
-运行态 `telemetry.jsonl`、周期报告和 `state.json` 默认位于 `.codex_tmp/adaptive/`，已被 `.gitignore` 排除。规则包每个周期重新读取并计算指纹，因此更新本地 arena-hero skill 后，下一轮评估会使用新规则；旧规则的模型输出不会通过指纹校验。
+运行态 `telemetry.jsonl`、周期报告和 `state.json` 默认位于 `.codex_tmp/adaptive/`，已被 `.gitignore` 排除。规则包优先从项目内 [skills/arena-hero](skills/arena-hero) 加载，每个周期重新读取并计算指纹；因此 clone 到另一台机器时不需要给 LLM 单独安装 skill。更新这个目录后，下一轮评估会自动使用新规则，旧规则的模型输出不会通过指纹校验。只有项目包不存在时才兼容用户目录里的旧安装；项目包存在但缺文件时本轮安全失败，不会跨目录拼接规则。
 
 ## 观察、停止与手动操作
 
@@ -194,20 +195,20 @@ python .\balanced_tactic.py
 | Core | 静止时才接受存入、治疗、修盾或生产；无 upkeep，价格通过 `unit_cost(unit_type, population)` 计算，不主动发起迁移。 |
 | Ranger | 敌方 Beacon carrier > 威胁己方 Beacon carrier 的敌人 > 敌方 Core > 其他敌人；对 carrier/Core 使用精确目标射击，预测位置使用合法 target-free cell fire。 |
 | Vanguard | 先 Sweep 相邻敌方 carrier，再处理威胁己方 carrier 的格、敌方 Core 和其他目标；无真实目标时才 Sweep 可见敌人可能进入的相邻预测格。 |
-| Worker | 初始 runner 沿公开 Beacon 坐标前进；己方 carrier 优先保命/回 Core；其他 Worker 采集当前可见资源，携货回静止 Core 存入。 |
-| Beacon | 只有当前状态为 `GROUND` 且同格才拾取；状态未知时只沿公开坐标移动，不猜测 carrier 或 ground。 |
+| Worker | 生存/载货返航 > 当前格采集 > 一对一资源路线 > 八方向环形侦察；己方 carrier 优先保命/回 Core。资源线索过期、停滞或振荡时自动换目标。 |
+| Beacon | 只有当前状态为 `GROUND` 且同格才拾取；远程任务通常要等 6 Worker 经济启动，近距离可见地面 Beacon 可机会性抢取；状态未知时不猜测 carrier 或 ground。 |
 
 每个 Turn 的高层优先级是：
 
 1. 处理同格 Beacon 拾取和 carrier 生存动作。
 2. 处理敌方 Beacon carrier/Core 的直接攻击与预测格攻击。
-3. 让 runner、护卫和 Worker 完成公开 Beacon 路线、存入、采集、返航或避障移动。
+3. 先维持 Worker 的存入、采集、独占资源分配与分散探索；只有经济就绪或近距离明确机会时才租用 Beacon runner，并持续检查其进度。
 4. 为 Core HP、可预见的非致命伤害和 Beacon carrier 恢复预留资源；普通 Unit heal 只使用剩余预算，必要时允许同格 Beacon carrier 预排一次满血/战后 HEAL，再执行 Core HEAL/REPAIR。
-5. 使用 v0.14 动态价格生产；人口 2 先走 Vanguard 容量桥，之后保持 Ranger 偏重并补 Vanguard 护卫。
+5. 使用 v0.14 动态价格按 6W → 1V1R → 12W → 3V4R → 23W 的阶段扩军，成熟后保持 Ranger 偏重并补 Vanguard 护卫。
 
 ### 生产倾向
 
-v0.14 已移除每 Tick upkeep。前 20 个 Unit 使用基础价格，Core 在不需要恢复且格子有空间时直接使用当前 `unit_cost()` 扩军；第 21 个 Unit 起价格按官方动态公式增加。策略先保留两名 Worker：人口为 2 时容量只有 10，Ranger 的 12 点价格放不下，因此先生产 Vanguard；人口达到 3 后容量为 15，再生产 Ranger，随后按 Ranger 偏重、Vanguard 护卫的比例扩军。
+v0.14 已移除每 Tick upkeep。前 20 个 Unit 使用基础价格，Core 在不需要恢复且格子有空间时直接使用当前 `unit_cost()` 扩军；第 21 个 Unit 起价格按官方动态公式增加。默认方案先把 Worker 从初始规模扩到 6，建立可持续采集/侦察面；再补 1 Vanguard 与 1 Ranger，继续扩到 12 Worker、3 Vanguard、4 Ranger，最终形成 23 Worker 的经济底盘。达到成熟规模后再按默认约 2:1 的 Ranger/Vanguard 倾向扩大火力。
 
 | 单位 | 代码中的基础成本 |
 | --- | ---: |
@@ -236,11 +237,11 @@ python -m pip install pytest
 
 - Ranger 射击范围、对齐和障碍判断。
 - Vanguard 相邻目标选择。
-- Worker 采集、存入、分配、避障和受威胁撤退。
-- 单位/Core 恢复（含战后预防性 HEAL）、Beacon runner/carrier 记忆、预测射击/扫击和动态生产价格。
+- Worker 采集、存入、最小成本一对一分配、八方向探索、TTL、卡路冷却、两格振荡恢复和受威胁撤退。
+- 单位/Core 恢复（含战后预防性 HEAL）、有租期 Beacon runner/carrier、分阶段 23/3/4 扩军、预测射击/扫击和动态生产价格。
 - Core 移动时禁止存入和生产。
 - API key 不被打印，以及每个 Turn 只提交一次计划。
-- 两阶段 evaluator/designer 顺序、规则指纹、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
+- 项目内置 Arena Hero skill 的完整性/优先级、两阶段 evaluator/designer 规则指纹、聚合经济评分、LLM 提示脱敏、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
 
 也可以运行依赖和差异检查：
 
@@ -327,10 +328,13 @@ git push -u origin main
 | 文件 | 用途 |
 | --- | --- |
 | [balanced_tactic.py](balanced_tactic.py) | 战术决策、API key 读取和持续运行入口。 |
+| [economic_strategy.py](economic_strategy.py) | 有界资源记忆、一对一分配、环形侦察、路线进度与 runner 租约。 |
 | [strategy_policy.py](strategy_policy.py) | 有范围约束的 `StrategyProfile` 与 Beacon/经济 score 计算。 |
 | [adaptive_strategy.py](adaptive_strategy.py) | 脱敏遥测、规则指纹、双 LLM 协调器、金丝雀回滚与禁用模式。 |
+| [skills/arena-hero](skills/arena-hero) | 两个 LLM 每轮共同加载的项目内 v0.14 规则与 SDK 文档包。 |
 | [requirements.txt](requirements.txt) | Arena Hero Python SDK 版本约束。 |
 | [test_balanced_tactic.py](test_balanced_tactic.py) | 无需真实连接的行为测试。 |
+| [test_economic_strategy.py](test_economic_strategy.py) | 经济分配、探索、停滞、振荡与 runner 租约测试。 |
 | [test_adaptive_strategy.py](test_adaptive_strategy.py) | 自适应遥测、评分、传输和回滚测试。 |
 | [LICENSE](LICENSE) | GNU GPL v3 许可证全文。 |
 

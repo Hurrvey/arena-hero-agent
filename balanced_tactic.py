@@ -14,7 +14,7 @@ Sweep are used only for positions derived from currently visible enemies.
 from __future__ import annotations
 
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from getpass import getpass
 from typing import Iterable
@@ -31,6 +31,7 @@ from economic_strategy import (
     EconomySettings,
     advance_stalled_targets,
     assign_resource_targets,
+    detect_two_cell_oscillation,
     refresh_economy_memory,
     scout_targets,
     update_runner_lease,
@@ -225,6 +226,7 @@ class TacticMemory:
     processed_event_order: list[bytes] = field(default_factory=list)
     policy: StrategyProfile = field(default_factory=StrategyProfile.default)
     economy: EconomyMemory = field(default_factory=EconomyMemory)
+    economy_diagnostics: dict[str, object] = field(default_factory=dict)
 
     def observe(self, turn) -> None:
         # A plan is scoped to one complete Turn.  Never carry a speculative
@@ -388,6 +390,68 @@ def _visible_enemy_carrier(turn):
         if _same_id(getattr(enemy, "id", None), carrier_id):
             return enemy
     return None
+
+
+def _update_economy_diagnostics(
+    turn,
+    memory: TacticMemory,
+    *,
+    acted: set[object],
+    runner=None,
+    carrier=None,
+) -> None:
+    """Store aggregate planner health without IDs, cells, or route targets."""
+
+    modes: Counter[str] = Counter()
+    idle = 0
+    runner_id = getattr(runner, "id", None)
+    carrier_id = getattr(carrier, "id", None)
+    for worker in getattr(turn, "workers", ()) or ():
+        worker_key = _uuid_key(worker.id)
+        if carrier_id is not None and _same_id(worker.id, carrier_id):
+            mode = "BEACON_CARRIER"
+        elif runner_id is not None and _same_id(worker.id, runner_id):
+            mode = "BEACON_RUNNER"
+        elif int(getattr(worker, "cargo", 0) or 0) > 0:
+            mode = "RETURN_CARGO"
+        elif getattr(worker, "position", None) in set(
+            getattr(turn, "resource_cells", ()) or ()
+        ):
+            mode = "HARVEST"
+        elif worker_key in memory.economy.resource_intents:
+            mode = "RESOURCE_ROUTE"
+        else:
+            mode = "SCOUT"
+        modes[mode] += 1
+        if worker.id not in acted:
+            idle += 1
+
+    resource_stalls = sum(
+        progress.stalled_turns > 0
+        for progress in memory.economy.resource_progress.values()
+    )
+    scout_stalls = sum(
+        progress.stalled_turns > 0
+        for progress in memory.economy.scout_progress.values()
+    )
+    lease = memory.economy.runner_lease
+    runner_stall = int(lease is not None and lease.stalled_turns > 0)
+    oscillations = sum(
+        detect_two_cell_oscillation(history)
+        for history in memory.economy.worker_history.values()
+    )
+    memory.economy_diagnostics = {
+        "visible_resource_count": len(
+            set(getattr(turn, "resource_cells", ()) or ())
+        ),
+        "worker_modes": dict(sorted(modes.items())),
+        "idle_worker_ticks": idle,
+        "route_stalls": resource_stalls + scout_stalls + runner_stall,
+        "oscillation_ticks": oscillations,
+        "runner_progress_ticks": int(
+            lease is not None and lease.stalled_turns == 0
+        ),
+    }
 
 
 def _enemy_can_attack_cell(enemy, cell, obstacles: Iterable[tuple[int, int]]) -> bool:
@@ -2554,6 +2618,16 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     memory = memory or TacticMemory()
     memory.observe(turn)
     if turn.core is None:
+        memory.economy_diagnostics = {
+            "visible_resource_count": len(
+                set(getattr(turn, "resource_cells", ()) or ())
+            ),
+            "worker_modes": {},
+            "idle_worker_ticks": 0,
+            "route_stalls": 0,
+            "oscillation_ticks": 0,
+            "runner_progress_ticks": 0,
+        }
         return None
 
     refresh_economy_memory(
@@ -2686,6 +2760,13 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
         acted=acted,
         planned_moves=planned_moves,
     )
+    _update_economy_diagnostics(
+        turn,
+        memory,
+        acted=acted,
+        runner=runner,
+        carrier=own_carrier,
+    )
     return None
 
 
@@ -2729,8 +2810,25 @@ def play(api_key: str | None = None, adaptive=None) -> None:
                 try:
                     # Observation is deliberately after submit.  Any local
                     # telemetry or background LLM failure is fail-open.
-                    snapshot_observer = getattr(coordinator, "observe_snapshot", None)
-                    if callable(snapshot_observer):
+                    diagnostic_observer = getattr(
+                        coordinator,
+                        "observe_snapshot_with_diagnostics",
+                        None,
+                    )
+                    if callable(diagnostic_observer):
+                        diagnostic_observer(
+                            turn,
+                            accepted,
+                            profile,
+                            memory.economy_diagnostics,
+                        )
+                    elif callable(
+                        snapshot_observer := getattr(
+                            coordinator,
+                            "observe_snapshot",
+                            None,
+                        )
+                    ):
                         snapshot_observer(turn, accepted, profile)
                     else:
                         # Preserve compatibility with injected coordinators

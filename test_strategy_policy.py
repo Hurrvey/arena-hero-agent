@@ -95,3 +95,20 @@ def test_internal_score_uses_exact_beacon_weight_without_tiebreaker():
 def test_internal_score_rejects_negative_observation_counts():
     with pytest.raises(ValueError):
         internal_score({"beacon_ticks": -1})
+
+
+def test_internal_score_penalizes_economic_stagnation_and_rewards_progress():
+    stalled = internal_score({
+        "zero_resource_ticks": 10,
+        "idle_worker_ticks": 4,
+        "route_stalls": 3,
+        "oscillation_ticks": 2,
+    })
+    progressing = internal_score({
+        "resources_harvested": 4,
+        "resources_deposited": 4,
+        "runner_progress_ticks": 4,
+    })
+
+    assert stalled < 0
+    assert progressing > 8

@@ -115,6 +115,100 @@ def test_turn_telemetry_contains_no_api_key_or_authorization_header():
     assert "secret" not in encoded.lower()
 
 
+def test_telemetry_contains_aggregate_economy_modes_without_targets_or_ids():
+    from adaptive_strategy import TurnTelemetry
+
+    turn = SimpleNamespace(
+        tick=12,
+        state=SimpleNamespace(status="ACTIVE", population=2, resources=0),
+        events=(),
+    )
+    diagnostics = {
+        "visible_resource_count": 0,
+        "worker_modes": {"SCOUT": 1, "IDLE": 1},
+        "idle_worker_ticks": 1,
+        "route_stalls": 1,
+        "oscillation_ticks": 1,
+        "runner_progress_ticks": 0,
+        "target": [999, 999],
+        "worker_id": "private-id",
+    }
+
+    record = TurnTelemetry.from_turn(
+        turn,
+        SimpleNamespace(accepted=True),
+        StrategyProfile.default(),
+        diagnostics=diagnostics,
+    )
+
+    assert record["economy"] == {
+        "visible_resource_count": 0,
+        "worker_modes": {"IDLE": 1, "SCOUT": 1},
+        "idle_worker_ticks": 1,
+        "route_stalls": 1,
+        "oscillation_ticks": 1,
+        "runner_progress_ticks": 0,
+    }
+    assert "private-id" not in json.dumps(record["economy"])
+    assert "999" not in json.dumps(record["economy"])
+
+
+def test_scorecard_counts_zero_resource_stalls_oscillation_and_progress():
+    from adaptive_strategy import Scorecard
+
+    score = Scorecard.from_records([
+        {
+            "tick": 1,
+            "state": {"resources": 0},
+            "economy": {
+                "idle_worker_ticks": 1,
+                "route_stalls": 2,
+                "oscillation_ticks": 1,
+                "runner_progress_ticks": 0,
+            },
+            "events": [],
+        },
+        {
+            "tick": 2,
+            "state": {"resources": 3},
+            "economy": {
+                "idle_worker_ticks": 0,
+                "route_stalls": 0,
+                "oscillation_ticks": 0,
+                "runner_progress_ticks": 1,
+            },
+            "events": [],
+        },
+    ])
+
+    assert score.zero_resource_ticks == 1
+    assert score.idle_worker_ticks == 1
+    assert score.route_stalls == 2
+    assert score.oscillation_ticks == 1
+    assert score.runner_progress_ticks == 1
+    assert score.to_mapping()["internal_score"] < 0
+
+
+def test_llm_prompt_records_remove_identifiers_coordinates_and_targets():
+    from adaptive_strategy import _bounded_prompt_records
+
+    records, _ = _bounded_prompt_records([{
+        "tick": 1,
+        "state": {"resources": 0, "population": 2},
+        "core": {"id": "core-private", "owner_username": "private-user", "position": [9, 9], "hp": 5},
+        "units": [{"id": "unit-private", "position": [8, 8], "unit_type": "WORKER", "cargo": 0}],
+        "visible_enemies": [{"id": "enemy-private", "position": [7, 7], "unit_type": "RANGER"}],
+        "events": [{"event_id": "event-private", "actor_id": "actor-private", "event_type": "HARVEST_SUCCEEDED", "values": {"amount": 1}}],
+        "economy": {"worker_modes": {"SCOUT": 1}, "oscillation_ticks": 1},
+    }])
+    encoded = json.dumps(records)
+
+    for private in ("core-private", "private-user", "unit-private", "enemy-private", "event-private", "actor-private", "[9, 9]", "[8, 8]", "[7, 7]"):
+        assert private not in encoded
+    assert "HARVEST_SUCCEEDED" in encoded
+    assert "oscillation_ticks" in encoded
+
+
 def test_turn_telemetry_whitelists_fields_and_json_serializes_model_dump():
     from adaptive_strategy import TurnTelemetry
 

@@ -801,6 +801,104 @@ def test_play_uses_the_turn_profile_snapshot_for_adaptive_observation(monkeypatc
     assert capsys.readouterr().out == "tick=9 accepted=True\n"
 
 
+def test_play_passes_only_aggregate_economy_diagnostics_when_supported(
+    monkeypatch, capsys
+) -> None:
+    observed = []
+
+    class FakeTurn:
+        tick = 10
+        core = None
+
+        def submit(self):
+            return SimpleNamespace(tick=self.tick, accepted=True)
+
+    class FakeGame:
+        def __init__(self, *, api_key):
+            assert api_key == "provided-key"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def turns(self):
+            yield FakeTurn()
+
+    class DiagnosticCoordinator:
+        def current_profile(self):
+            return StrategyProfile.default()
+
+        def observe_snapshot_with_diagnostics(
+            self, turn, accepted, profile, diagnostics
+        ):
+            observed.append(diagnostics)
+
+        def close(self):
+            return None
+
+    def fake_choose_actions(turn, memory):
+        memory.economy_diagnostics = {
+            "visible_resource_count": 0,
+            "worker_modes": {"SCOUT": 2},
+            "idle_worker_ticks": 0,
+            "route_stalls": 0,
+            "oscillation_ticks": 0,
+            "runner_progress_ticks": 0,
+        }
+
+    monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
+    monkeypatch.setattr("balanced_tactic.choose_actions", fake_choose_actions)
+
+    play("provided-key", adaptive=DiagnosticCoordinator())
+
+    assert observed == [{
+        "visible_resource_count": 0,
+        "worker_modes": {"SCOUT": 2},
+        "idle_worker_ticks": 0,
+        "route_stalls": 0,
+        "oscillation_ticks": 0,
+        "runner_progress_ticks": 0,
+    }]
+    assert capsys.readouterr().out == "tick=10 accepted=True\n"
+
+
+def test_choose_actions_records_aggregate_worker_economy_health() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=5,
+    )
+    first = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(2, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    second = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(0, 2),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(core=core, units=(first, second), resources=0)
+    memory = TacticMemory()
+
+    choose_actions(turn, memory)
+
+    diagnostics = memory.economy_diagnostics
+    assert diagnostics["visible_resource_count"] == 0
+    assert diagnostics["worker_modes"] == {"SCOUT": 2}
+    assert diagnostics["idle_worker_ticks"] == 0
+    encoded = repr(diagnostics)
+    assert str(first.id) not in encoded
+    assert str(second.id) not in encoded
+    assert "(2, 0)" not in encoded
+    assert "(0, 2)" not in encoded
+
+
 def test_core_beacon_pickup_is_not_replaced_by_production() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),
