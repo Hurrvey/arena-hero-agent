@@ -642,6 +642,18 @@ class Scorecard:
         )
         if controlled_core_id is not None:
             self._controlled_core_ids.add(str(controlled_core_id))
+        # A private ATTACK destruction event identifies the previous controlled
+        # Core even when this scoring window starts after its same-Tick
+        # respawn. Claim those IDs before scanning CORE_DAMAGED events because
+        # wire event ordering need not put destruction first.
+        for event in record.get("events", ()) or ():
+            if (
+                isinstance(event, Mapping)
+                and event.get("event_type") == "CORE_DESTROYED"
+                and event.get("reason_code") == "ATTACK"
+                and event.get("target_id") is not None
+            ):
+                self._controlled_core_ids.add(str(event["target_id"]))
         tick = record.get("tick")
         if isinstance(tick, int) and tick >= 0 and tick not in self._ticks:
             self._ticks.add(tick)

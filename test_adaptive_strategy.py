@@ -259,6 +259,30 @@ def test_scorecard_keeps_destroyed_controlled_core_id_across_respawn():
     assert Scorecard.from_records(records).core_damage_taken == 5
 
 
+def test_scorecard_recovers_destroyed_core_id_when_window_starts_after_respawn():
+    from adaptive_strategy import Scorecard
+
+    record = {
+        "tick": 2,
+        "core": {"id": "new-core"},
+        "events": [
+            {
+                **_event("fatal", "CORE_DAMAGED", values={"damage": 5}),
+                "target_id": "old-core",
+            },
+            {
+                **_event("destroyed", "CORE_DESTROYED", reason_code="ATTACK"),
+                "target_id": "old-core",
+            },
+        ],
+    }
+
+    score = Scorecard.from_records([record])
+
+    assert score.core_damage_taken == 5
+    assert score.core_losses == 1
+
+
 def test_llm_prompt_records_include_only_aggregate_defense_data():
     from adaptive_strategy import _bounded_prompt_records
 
