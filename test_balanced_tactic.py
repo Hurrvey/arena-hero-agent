@@ -21,6 +21,7 @@ from balanced_tactic import (
     load_api_key,
     play,
 )
+from defense_strategy import ThreatLevel
 from strategy_policy import StrategyProfile
 
 
@@ -215,6 +216,47 @@ def test_ranger_does_not_shoot_through_a_visible_obstacle() -> None:
     choose_actions(turn)
 
     assert ranger.actions == []
+
+
+def test_defense_memory_is_recomputed_from_each_visible_turn() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=10,
+    )
+    defender = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000020"),
+        position=(6, 0),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    watcher = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        id=UUID("00000000-0000-0000-0000-000000000030"),
+        position=(4, 0),
+        hp=4,
+        shield=0,
+    )
+    beacon = SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id)
+    memory = TacticMemory()
+
+    choose_actions(
+        make_turn(core=core, units=(defender,), enemies=(watcher,), beacon=beacon),
+        memory,
+    )
+
+    assert memory.defense.level is ThreatLevel.WATCH
+    assert memory.defenders.vanguard_ids == frozenset({defender.id})
+
+    choose_actions(
+        make_turn(core=core, units=(defender,), enemies=(), beacon=beacon),
+        memory,
+    )
+
+    assert memory.defense.level is ThreatLevel.CLEAR
+    assert memory.defense.watch_ids == frozenset()
 
 
 def test_vanguard_sweeps_the_adjacent_cell_with_most_hostiles() -> None:

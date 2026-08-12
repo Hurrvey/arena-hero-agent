@@ -12,6 +12,7 @@ PROFILE_BOUNDS = {
     "beacon_priority": (0.75, 1.50),
     "economy_priority": (0.75, 1.50),
     "combat_priority": (0.50, 1.25),
+    "defense_priority": (0.75, 1.50),
     "ranger_ratio": (1.0, 3.0),
     "spawn_aggression": (0.0, 1.0),
 }
@@ -27,6 +28,10 @@ PROFILE_INT_BOUNDS = {
     "resource_stall_ticks": (3, 12),
     "scout_ring_step": (6, 20),
     "carrier_safety_margin": (0, 1),
+    "defender_vanguard_target": (1, 3),
+    "defender_ranger_target": (1, 4),
+    "defense_watch_radius": (4, 8),
+    "worker_evacuation_radius": (2, 5),
 }
 
 _DEFAULTS = {
@@ -34,6 +39,7 @@ _DEFAULTS = {
     "beacon_priority": 1.0,
     "economy_priority": 1.0,
     "combat_priority": 0.75,
+    "defense_priority": 1.0,
     "worker_target": 23,
     "bootstrap_worker_target": 6,
     "near_beacon_radius": 12,
@@ -44,6 +50,10 @@ _DEFAULTS = {
     "ranger_ratio": 2.0,
     "carrier_safety_margin": 0,
     "spawn_aggression": 0.5,
+    "defender_vanguard_target": 1,
+    "defender_ranger_target": 2,
+    "defense_watch_radius": 5,
+    "worker_evacuation_radius": 3,
 }
 
 
@@ -53,6 +63,7 @@ class StrategyProfile:
     beacon_priority: float = 1.0
     economy_priority: float = 1.0
     combat_priority: float = 0.75
+    defense_priority: float = 1.0
     worker_target: int = 23
     bootstrap_worker_target: int = 6
     near_beacon_radius: int = 12
@@ -63,6 +74,10 @@ class StrategyProfile:
     ranger_ratio: float = 2.0
     carrier_safety_margin: int = 0
     spawn_aggression: float = 0.5
+    defender_vanguard_target: int = 1
+    defender_ranger_target: int = 2
+    defense_watch_radius: int = 5
+    worker_evacuation_radius: int = 3
 
     def __post_init__(self) -> None:
         self.validate()
@@ -92,6 +107,7 @@ class StrategyProfile:
             "beacon_priority": self.beacon_priority,
             "economy_priority": self.economy_priority,
             "combat_priority": self.combat_priority,
+            "defense_priority": self.defense_priority,
             "worker_target": self.worker_target,
             "bootstrap_worker_target": self.bootstrap_worker_target,
             "near_beacon_radius": self.near_beacon_radius,
@@ -102,6 +118,10 @@ class StrategyProfile:
             "ranger_ratio": self.ranger_ratio,
             "carrier_safety_margin": self.carrier_safety_margin,
             "spawn_aggression": self.spawn_aggression,
+            "defender_vanguard_target": self.defender_vanguard_target,
+            "defender_ranger_target": self.defender_ranger_target,
+            "defense_watch_radius": self.defense_watch_radius,
+            "worker_evacuation_radius": self.worker_evacuation_radius,
         }
 
     def with_updates(self, **changes: object) -> "StrategyProfile":

@@ -14,6 +14,11 @@ def test_default_profile_preserves_beacon_and_economy_floor():
     assert profile.resource_memory_ttl == 64
     assert profile.resource_stall_ticks == 6
     assert profile.scout_ring_step == 10
+    assert profile.defense_priority == 1.0
+    assert profile.defender_vanguard_target == 1
+    assert profile.defender_ranger_target == 2
+    assert profile.defense_watch_radius == 5
+    assert profile.worker_evacuation_radius == 3
 
 
 def test_profile_rejects_unknown_or_out_of_range_fields():
@@ -36,9 +41,26 @@ def test_profile_round_trip_includes_bounded_dominance_parameters():
         resource_memory_ttl=80,
         resource_stall_ticks=7,
         scout_ring_step=12,
+        defense_priority=1.25,
+        defender_vanguard_target=2,
+        defender_ranger_target=3,
+        defense_watch_radius=7,
+        worker_evacuation_radius=4,
     )
 
     assert StrategyProfile.from_mapping(profile.to_mapping()) == profile
+
+
+def test_profile_rejects_out_of_range_defense_controls():
+    for changes in (
+        {"defense_priority": 2.0},
+        {"defender_vanguard_target": 0},
+        {"defender_ranger_target": 5},
+        {"defense_watch_radius": 3},
+        {"worker_evacuation_radius": 6},
+    ):
+        with pytest.raises(ValueError):
+            StrategyProfile.from_mapping(changes)
 
 
 def test_profile_round_trips_as_json_safe_mapping():

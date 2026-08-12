@@ -36,6 +36,13 @@ from economic_strategy import (
     scout_targets,
     update_runner_lease,
 )
+from defense_strategy import (
+    DefenseAssessment,
+    DefenderRoster,
+    ThreatLevel,
+    assess_core_defense,
+    select_defenders,
+)
 from strategy_policy import StrategyProfile
 
 
@@ -227,6 +234,8 @@ class TacticMemory:
     policy: StrategyProfile = field(default_factory=StrategyProfile.default)
     economy: EconomyMemory = field(default_factory=EconomyMemory)
     economy_diagnostics: dict[str, object] = field(default_factory=dict)
+    defense: DefenseAssessment = field(default_factory=DefenseAssessment.clear)
+    defenders: DefenderRoster = field(default_factory=DefenderRoster.empty)
 
     def observe(self, turn) -> None:
         # A plan is scoped to one complete Turn.  Never carry a speculative
@@ -390,6 +399,32 @@ def _visible_enemy_carrier(turn):
         if _same_id(getattr(enemy, "id", None), carrier_id):
             return enemy
     return None
+
+
+def _refresh_defense_state(turn, memory: TacticMemory) -> None:
+    """Recompute defense strictly from this Turn's visible geometry."""
+
+    core = getattr(turn, "core", None)
+    if core is None:
+        memory.defense = DefenseAssessment.clear()
+        memory.defenders = DefenderRoster.empty()
+        return
+    memory.defense = assess_core_defense(
+        core.position,
+        int(getattr(core, "hp", 0) or 0),
+        int(getattr(core, "shield", 0) or 0),
+        getattr(turn, "visible_enemies", ()) or (),
+        _obstacles_for(turn, memory),
+        watch_radius=int(memory.policy.defense_watch_radius),
+    )
+    carrier = _owned_beacon_carrier(turn, memory)
+    memory.defenders = select_defenders(
+        core.position,
+        tuple(getattr(turn, "units", ()) or ()),
+        carrier_id=getattr(carrier, "id", None),
+        vanguard_target=int(memory.policy.defender_vanguard_target),
+        ranger_target=int(memory.policy.defender_ranger_target),
+    )
 
 
 def _update_economy_diagnostics(
@@ -2618,6 +2653,7 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     memory = memory or TacticMemory()
     memory.observe(turn)
     if turn.core is None:
+        _refresh_defense_state(turn, memory)
         memory.economy_diagnostics = {
             "visible_resource_count": len(
                 set(getattr(turn, "resource_cells", ()) or ())
@@ -2629,6 +2665,8 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
             "runner_progress_ticks": 0,
         }
         return None
+
+    _refresh_defense_state(turn, memory)
 
     refresh_economy_memory(
         memory.economy,
