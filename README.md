@@ -1,6 +1,6 @@
-# Arena Hero Agent
+# Arena Hero Bot
 
-一个面向 Arena Hero v0.14 的确定性 Beacon-first 战术脚本。它读取每个 Turn 的当前可见状态，为 Core、Worker、Ranger 和 Vanguard 选择合法行动，再通过官方 Python SDK 提交完整计划。
+一个面向 Arena Hero 的战术脚本。它读取每个 Turn 的当前可见状态，为 Core、Worker、Ranger 和 Vanguard 选择合法行动，再通过官方 Python SDK 提交完整计划。
 
 > Arena Hero 没有单一总分，而是三个独立的 lifetime 排行榜：Beacon 持有 Tick、造成伤害、Core 摧毁参与。策略优先保护 Beacon 持有时间，再把剩余行动用于可见敌人伤害和 Core 参与；这能提高积分效率，但不能承诺固定名次或保证第一名。
 
