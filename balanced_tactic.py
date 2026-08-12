@@ -26,6 +26,14 @@ from arena_hero import (
     core_resource_capacity,
     unit_cost,
 )
+from economic_strategy import (
+    EconomyMemory,
+    EconomySettings,
+    advance_stalled_targets,
+    assign_resource_targets,
+    refresh_economy_memory,
+    scout_targets,
+)
 from strategy_policy import StrategyProfile
 
 
@@ -215,6 +223,7 @@ class TacticMemory:
     processed_event_ids: set[bytes] = field(default_factory=set)
     processed_event_order: list[bytes] = field(default_factory=list)
     policy: StrategyProfile = field(default_factory=StrategyProfile.default)
+    economy: EconomyMemory = field(default_factory=EconomyMemory)
 
     def observe(self, turn) -> None:
         # A plan is scoped to one complete Turn.  Never carry a speculative
@@ -763,7 +772,16 @@ def _choose_runner(turn, memory: TacticMemory):
     beacon_position = getattr(getattr(turn, "beacon", None), "position", None)
     if beacon_position is None:
         return None
-    candidates = list(getattr(turn, "units", ()))
+    # Cargo must reach the stationary Core before it can become useful.  Never
+    # turn a loaded Worker into a remote Beacon runner and strand its economy.
+    candidates = [
+        unit
+        for unit in getattr(turn, "units", ())
+        if not (
+            _enum_name(getattr(unit, "unit_type", None)) == "WORKER"
+            and int(getattr(unit, "cargo", 0) or 0) > 0
+        )
+    ]
     if not candidates:
         return None
 
@@ -1652,6 +1670,66 @@ def _queue_worker_actions(
     carrier_id = getattr(carrier, "id", None)
     runner_id = getattr(runner, "id", None)
 
+    settings = EconomySettings(
+        resource_memory_ttl=int(getattr(memory.policy, "resource_memory_ttl", 64)),
+        resource_stall_ticks=int(getattr(memory.policy, "resource_stall_ticks", 6)),
+        scout_ring_step=int(getattr(memory.policy, "scout_ring_step", 10)),
+    )
+    blocked_routes = set(obstacles) | {
+        enemy.position
+        for enemy in getattr(turn, "visible_enemies", ())
+        if getattr(enemy, "position", None) is not None
+    }
+    economic_workers = [
+        worker
+        for worker in turn.workers
+        if not worker.cargo
+        and not (
+            carrier_id is not None and _same_id(worker.id, carrier_id)
+        )
+        and not (
+            runner_id is not None and _same_id(worker.id, runner_id)
+        )
+    ]
+    existing_scouts = [
+        worker
+        for worker in economic_workers
+        if _uuid_key(worker.id) not in memory.economy.resource_intents
+    ]
+    previous_scout_targets = scout_targets(
+        memory.economy,
+        existing_scouts,
+        core_position=core_position,
+        tick=int(getattr(turn, "tick", 0)),
+        settings=settings,
+    )
+    advance_stalled_targets(
+        memory.economy,
+        economic_workers,
+        tick=int(getattr(turn, "tick", 0)),
+        blocked=blocked_routes,
+        scout_assignments=previous_scout_targets,
+        settings=settings,
+    )
+    resource_assignments = assign_resource_targets(
+        memory.economy,
+        economic_workers,
+        tick=int(getattr(turn, "tick", 0)),
+        blocked=blocked_routes,
+    )
+    scouting_workers = [
+        worker
+        for worker in economic_workers
+        if _uuid_key(worker.id) not in resource_assignments
+    ]
+    worker_scout_targets = scout_targets(
+        memory.economy,
+        scouting_workers,
+        core_position=core_position,
+        tick=int(getattr(turn, "tick", 0)),
+        settings=settings,
+    )
+
     # The Worker loop is UUID-ordered.  A cargo Worker at the Core may be
     # examined before a later, visibly doomed Worker gets its safe retreat
     # queued.  Pre-project only ordinary threatened Workers whose deterministic
@@ -1709,6 +1787,14 @@ def _queue_worker_actions(
             continue
         is_runner = runner_id is not None and _same_id(worker.id, runner_id)
         is_carrier = carrier_id is not None and _same_id(worker.id, carrier_id)
+        same_tick_core_pickup_escort = bool(
+            memory.planned_carrier_tick == getattr(turn, "tick", None)
+            and carrier is core
+            and worker.position == core_position
+            and not worker.cargo
+        )
+        if same_tick_core_pickup_escort:
+            continue
         worker_threatened = _cell_is_threatened(
             worker.position,
             turn.visible_enemies,
@@ -1894,15 +1980,10 @@ def _queue_worker_actions(
         elif worker.cargo:
             goal = core_position
         else:
-            for resource_cell in sorted(
-                turn.resource_cells,
-                key=lambda cell: (_distance(worker.position, cell), cell[0], cell[1]),
-            ):
-                if resource_cell not in claimed_resources:
-                    goal = resource_cell
-                    break
+            worker_key = _uuid_key(worker.id)
+            goal = resource_assignments.get(worker_key)
             if goal is None:
-                goal = core_position
+                goal = worker_scout_targets.get(worker_key, core_position)
 
         # A Core cell may hold only one Core plus one Unit.  If an economy
         # Worker is parked on the Core while another object is already there,
@@ -2407,6 +2488,26 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     memory.observe(turn)
     if turn.core is None:
         return None
+
+    refresh_economy_memory(
+        memory.economy,
+        tick=int(getattr(turn, "tick", 0)),
+        workers=tuple(getattr(turn, "workers", ())),
+        visible_resources=getattr(turn, "resource_cells", ()),
+        friendly_positions=(
+            turn.core.position,
+            *(unit.position for unit in getattr(turn, "units", ())),
+        ),
+        settings=EconomySettings(
+            resource_memory_ttl=int(
+                getattr(memory.policy, "resource_memory_ttl", 64)
+            ),
+            resource_stall_ticks=int(
+                getattr(memory.policy, "resource_stall_ticks", 6)
+            ),
+            scout_ring_step=int(getattr(memory.policy, "scout_ring_step", 10)),
+        ),
+    )
 
     acted: set[object] = set()
     planned_from_core: set[object] = set()

@@ -1625,7 +1625,7 @@ def test_critically_threatened_core_secures_beacon_without_safe_unit() -> None:
     assert core.actions == [("PICKUP_BEACON",)]
 
 
-def test_core_cell_worker_does_not_roam_without_spawn_pressure() -> None:
+def test_core_cell_worker_scouts_without_visible_resources() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),
         position=(0, 0),
@@ -1647,8 +1647,130 @@ def test_core_cell_worker_does_not_roam_without_spawn_pressure() -> None:
 
     choose_actions(turn)
 
-    assert worker.actions == []
+    assert worker.actions == [("MOVE", Direction.RIGHT)]
     assert core.actions == []
+
+
+def test_two_empty_workers_without_visible_resources_explore_distinctly() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=10,
+    )
+    first = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    second = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(0, 1),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(first, second),
+        resources=0,
+        beacon=SimpleNamespace(position=(100, 100), status=None, carrier_id=None),
+    )
+
+    choose_actions(turn, TacticMemory())
+
+    assert first.actions == [("MOVE", Direction.RIGHT)]
+    assert second.actions == [("MOVE", Direction.RIGHT)]
+
+
+def test_visible_resource_targets_are_unique_across_workers() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=10,
+    )
+    first = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    second = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000002"),
+        position=(4, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(first, second),
+        resources=0,
+        resource_cells={(1, 0), (5, 0)},
+        beacon=SimpleNamespace(position=(100, 100), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn, TacticMemory())
+
+    assert first.actions == [("MOVE", Direction.RIGHT)]
+    assert second.actions == [("MOVE", Direction.RIGHT)]
+
+
+def test_cargo_worker_still_returns_before_scouting() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=10,
+    )
+    cargo = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(2, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=1,
+    )
+    turn = make_turn(
+        core=core,
+        units=(cargo,),
+        resources=0,
+        beacon=SimpleNamespace(position=(100, 100), status=None, carrier_id=None),
+    )
+
+    choose_actions(turn, TacticMemory())
+
+    assert cargo.actions == [("MOVE", Direction.LEFT)]
+
+
+def test_two_cell_worker_oscillation_changes_scout_route() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=10,
+    )
+    memory = TacticMemory()
+    positions = ((1, 0), (2, 0), (1, 0), (2, 0))
+
+    for tick, position in enumerate(positions, start=1):
+        unit = FakeController(
+            object_id=UUID("00000000-0000-0000-0000-000000000001"),
+            position=position,
+            hp=2,
+            unit_type=UnitType.WORKER,
+        )
+        turn = make_turn(
+            core=core,
+            units=(unit,),
+            resources=0,
+            obstacle_cells={(3, 0)},
+            beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+        )
+        turn.tick = tick
+        choose_actions(turn, memory)
+
+    assert memory.economy.scout_stages[unit.id.bytes] == 1
+    assert unit.actions == [("MOVE", Direction.DOWN)]
 
 
 def test_idle_combat_unit_vacates_core_for_affordable_spawn() -> None:
