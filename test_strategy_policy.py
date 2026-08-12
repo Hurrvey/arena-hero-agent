@@ -134,3 +134,18 @@ def test_internal_score_penalizes_economic_stagnation_and_rewards_progress():
 
     assert stalled < 0
     assert progressing > 8
+
+
+def test_internal_score_values_defense_without_rewarding_permanent_turtling():
+    exposed = internal_score({
+        "core_threat_ticks": 2,
+        "projected_lethal_ticks": 1,
+        "core_damage_taken": 3,
+    })
+    defended = internal_score({
+        "defender_coverage": 3,
+        "worker_evacuations": 1,
+    })
+
+    assert exposed < -10
+    assert 0 < defended < 2

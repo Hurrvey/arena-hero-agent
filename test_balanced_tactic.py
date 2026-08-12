@@ -496,6 +496,58 @@ def test_approach_state_pauses_workers_and_spawns_missing_defender() -> None:
     assert core.actions == [("SPAWN", UnitType.VANGUARD)]
 
 
+def test_planner_exports_aggregate_defense_diagnostics() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=1, shield=1
+    )
+    vanguard = FakeController(
+        object_id=UUID(int=1),
+        position=(2, 2),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    worker = FakeController(
+        object_id=UUID(int=2),
+        position=(0, 1),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    enemies = (
+        SimpleNamespace(
+            kind="UNIT",
+            unit_type=UnitType.RANGER,
+            id=UUID(int=200),
+            position=(0, 3),
+            hp=2,
+            shield=0,
+        ),
+        SimpleNamespace(
+            kind="UNIT",
+            unit_type=UnitType.VANGUARD,
+            id=UUID(int=201),
+            position=(1, 0),
+            hp=4,
+            shield=0,
+        ),
+    )
+    memory = TacticMemory()
+    turn = make_turn(
+        core=core,
+        units=(vanguard, worker),
+        enemies=enemies,
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn, memory)
+
+    assert memory.economy_diagnostics["defense_level"] == "LETHAL"
+    assert memory.economy_diagnostics["core_threat_ticks"] == 1
+    assert memory.economy_diagnostics["projected_lethal_ticks"] == 1
+    assert memory.economy_diagnostics["incoming_core_damage"] == 2
+    assert memory.economy_diagnostics["defender_coverage"] == 1
+    assert memory.economy_diagnostics["worker_evacuations"] == 1
+
+
 def test_vanguard_sweeps_the_adjacent_cell_with_most_hostiles() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),

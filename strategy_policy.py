@@ -165,6 +165,14 @@ def internal_score(metrics: Mapping[str, float]) -> float:
         "route_stalls": -1.0,
         "oscillation_ticks": -2.0,
         "runner_progress_ticks": 0.25,
+        # Defensive exposure is expensive, but routine watch states should not
+        # overpower the primary Beacon/economy objectives. Positive coverage
+        # signals remain deliberately small to prevent permanent turtling.
+        "core_threat_ticks": -0.5,
+        "projected_lethal_ticks": -6.0,
+        "core_damage_taken": -2.0,
+        "defender_coverage": 0.25,
+        "worker_evacuations": 0.25,
     }
     total = 0.0
     for name, weight in weights.items():

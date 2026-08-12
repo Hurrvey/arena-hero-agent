@@ -153,6 +153,100 @@ def test_telemetry_contains_aggregate_economy_modes_without_targets_or_ids():
     assert "999" not in json.dumps(record["economy"])
 
 
+def test_telemetry_contains_bounded_defense_diagnostics():
+    from adaptive_strategy import TurnTelemetry
+
+    turn = SimpleNamespace(
+        tick=13,
+        state=SimpleNamespace(status="ACTIVE", population=3, resources=2),
+        events=(),
+    )
+    diagnostics = {
+        "defense_level": "ATTACK",
+        "core_threat_ticks": 1,
+        "projected_lethal_ticks": 0,
+        "incoming_core_damage": 2,
+        "defender_coverage": 2,
+        "worker_evacuations": 1,
+        "attacker_ids": ["private-enemy"],
+        "core_position": [99, 99],
+    }
+
+    record = TurnTelemetry.from_turn(
+        turn,
+        SimpleNamespace(accepted=True),
+        StrategyProfile.default(),
+        diagnostics=diagnostics,
+    )
+
+    assert record["defense"] == {
+        "defense_level": "ATTACK",
+        "core_threat_ticks": 1,
+        "projected_lethal_ticks": 0,
+        "incoming_core_damage": 2,
+        "defender_coverage": 2,
+        "worker_evacuations": 1,
+    }
+    encoded = json.dumps(record["defense"])
+    assert "private-enemy" not in encoded
+    assert "99" not in encoded
+
+
+def test_scorecard_penalizes_core_damage_and_lethal_exposure():
+    from adaptive_strategy import Scorecard
+
+    score = Scorecard.from_records([
+        {
+            "tick": 1,
+            "defense": {
+                "defense_level": "LETHAL",
+                "core_threat_ticks": 1,
+                "projected_lethal_ticks": 1,
+                "incoming_core_damage": 2,
+                "defender_coverage": 1,
+                "worker_evacuations": 1,
+            },
+            "events": [
+                _event(
+                    "core-hit",
+                    "CORE_DAMAGED",
+                    values={"damage": 2, "shield_damage": 1, "hp_damage": 1},
+                )
+            ],
+        }
+    ])
+
+    mapping = score.to_mapping()
+    assert score.core_threat_ticks == 1
+    assert score.projected_lethal_ticks == 1
+    assert score.incoming_core_damage == 2
+    assert score.defender_coverage == 1
+    assert score.worker_evacuations == 1
+    assert score.core_damage_taken == 2
+    assert mapping["internal_score"] < 0
+
+
+def test_llm_prompt_records_include_only_aggregate_defense_data():
+    from adaptive_strategy import _bounded_prompt_records
+
+    records, _ = _bounded_prompt_records([{
+        "tick": 1,
+        "defense": {
+            "defense_level": "APPROACH",
+            "core_threat_ticks": 1,
+            "defender_coverage": 2,
+            "attacker_id": "private-id",
+            "target": [8, 8],
+        },
+    }])
+
+    encoded = json.dumps(records)
+    assert "APPROACH" in encoded
+    assert "defender_coverage" in encoded
+    assert "private-id" not in encoded
+    assert "[8, 8]" not in encoded
+
+
 def test_scorecard_counts_zero_resource_stalls_oscillation_and_progress():
     from adaptive_strategy import Scorecard
 
@@ -332,6 +426,34 @@ def test_both_llm_roles_receive_same_project_skill_fingerprint(tmp_path):
 
     assert len(transport.calls) == 2
     assert all(fingerprint in call.system for call in transport.calls)
+    coordinator.close()
+
+
+def test_both_llm_roles_are_told_to_balance_defense_beacon_and_economy(tmp_path):
+    from adaptive_strategy import AdaptiveCoordinator, SkillBundle
+
+    fingerprint = SkillBundle.load().fingerprint
+    transport = FakeTransport([
+        _evaluation_json(fingerprint),
+        _designer_json(worker_target=18, skill_fingerprint=fingerprint),
+    ])
+    coordinator = AdaptiveCoordinator(
+        transport=transport,
+        state_dir=tmp_path,
+        interval_ticks=1,
+        min_seconds=0,
+        auto_apply=False,
+    )
+    coordinator.ingest_record({"tick": 1, "events": []})
+
+    coordinator.run_cycle()
+
+    evaluator, designer = transport.calls
+    assert "Core defense/survival" in evaluator.system
+    assert "Beacon control" in evaluator.system
+    assert "economic growth" in evaluator.system
+    assert "preserve the Core" in designer.system
+    assert "permanent turtle" in designer.system
     coordinator.close()
 
 

@@ -487,6 +487,14 @@ def _update_economy_diagnostics(
         "runner_progress_ticks": int(
             lease is not None and lease.stalled_turns == 0
         ),
+        "defense_level": memory.defense.level.name,
+        "core_threat_ticks": int(memory.defense.level >= ThreatLevel.WATCH),
+        "projected_lethal_ticks": int(
+            memory.defense.level is ThreatLevel.LETHAL
+        ),
+        "incoming_core_damage": memory.defense.incoming_damage,
+        "defender_coverage": len(memory.defenders.all_ids),
+        "worker_evacuations": memory.worker_evacuations,
     }
 
 
