@@ -195,26 +195,39 @@ def test_telemetry_contains_bounded_defense_diagnostics():
 def test_scorecard_penalizes_core_damage_and_lethal_exposure():
     from adaptive_strategy import Scorecard
 
-    score = Scorecard.from_records([
-        {
-            "tick": 1,
-            "defense": {
-                "defense_level": "LETHAL",
-                "core_threat_ticks": 1,
-                "projected_lethal_ticks": 1,
-                "incoming_core_damage": 2,
-                "defender_coverage": 1,
-                "worker_evacuations": 1,
-            },
-            "events": [
-                _event(
+    owned = {
+        "tick": 1,
+        "core": {"id": "own-core"},
+        "defense": {
+            "defense_level": "LETHAL",
+            "core_threat_ticks": 1,
+            "projected_lethal_ticks": 1,
+            "incoming_core_damage": 2,
+            "defender_coverage": 1,
+            "worker_evacuations": 1,
+        },
+        "events": [
+            {
+                **_event(
                     "core-hit",
                     "CORE_DAMAGED",
                     values={"damage": 2, "shield_damage": 1, "hp_damage": 1},
-                )
-            ],
-        }
-    ])
+                ),
+                "target_id": "own-core",
+            }
+        ],
+    }
+    enemy = {
+        "tick": 2,
+        "core": {"id": "own-core"},
+        "events": [
+            {
+                **_event("enemy-hit", "CORE_DAMAGED", values={"damage": 9}),
+                "target_id": "enemy-core",
+            }
+        ],
+    }
+    score = Scorecard.from_records([owned, enemy])
 
     mapping = score.to_mapping()
     assert score.core_threat_ticks == 1
@@ -224,6 +237,26 @@ def test_scorecard_penalizes_core_damage_and_lethal_exposure():
     assert score.worker_evacuations == 1
     assert score.core_damage_taken == 2
     assert mapping["internal_score"] < 0
+
+
+def test_scorecard_keeps_destroyed_controlled_core_id_across_respawn():
+    from adaptive_strategy import Scorecard
+
+    records = [
+        {"tick": 1, "core": {"id": "old-core"}, "events": []},
+        {
+            "tick": 2,
+            "core": {"id": "new-core"},
+            "events": [
+                {
+                    **_event("fatal", "CORE_DAMAGED", values={"damage": 5}),
+                    "target_id": "old-core",
+                }
+            ],
+        },
+    ]
+
+    assert Scorecard.from_records(records).core_damage_taken == 5
 
 
 def test_llm_prompt_records_include_only_aggregate_defense_data():

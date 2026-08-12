@@ -15,6 +15,7 @@
 - **有边界的 Beacon 任务**：Beacon 坐标始终公开，但未知状态不会立刻抽走经济 Worker。经济达到 6 名 Worker 后才允许远程 runner；当前明确为 `GROUND` 且距离较近时可以机会性抢取。runner 必须持续缩短距离，停滞或 A-B-A-B 往返会被释放并进入冷却。
 - **载体保命与护卫**：只把当前 Turn 明确可见的己方 carrier 当作事实；状态进入迷雾时按未知处理，避免把过期 carrier 当成 10 点 shield cap；可见威胁会触发回 Core、护卫或在 Core 同格预排战后 HEAL。
 - **机会型高分战斗**：Ranger 优先敌方 Beacon carrier、威胁己方 carrier 的单位和敌方 Core，直接目标不足时向由可见敌人一步移动推导的合法空格射击；Vanguard 同理使用预测 Sweep。
+- **四级动态 Core 防御圈**：可见战斗单位会被分为 `WATCH`、`APPROACH`、`ATTACK`、`LETHAL`。平时只保留 1 Vanguard + 2 Ranger 的小型常备守军；敌军一步后可形成攻击位时，非载体战斗单位回防并切换战时生产；当前 Core 攻击者会被提权，致命攻击者优先于敌方 Core。
 - **Worker 经济与探索**：成熟目标为 23 名 Worker。可见/短期记忆资源通过确定性的最小成本一对一分配；没有资源时，空载 Worker 按八方向递增环分散侦察，不再返回 Core 原地或在两格之间永久往返。载货 Worker 仍优先返航存入，受威胁时撤退。
 - **分阶段扩军**：生产价格使用官方 `unit_cost()`，依次建设 6 Worker → 1 Vanguard → 1 Ranger → 12 Worker → 3 Vanguard → 4 Ranger → 23 Worker，随后按 Ranger 偏重比例继续扩大战斗力；容量不足时选择当前能够容纳的类型。
 - **受约束的确定性记忆**：永久障碍可以长期记忆；资源提示有 64 Tick TTL，路线有停滞阈值和冷却。carrier 仅使用当前可见状态或同 Tick 拾取计划，不把迷雾里的敌人、资源或 Beacon 归属当作当前事实。
@@ -132,10 +133,10 @@ tick=124 accepted=True
 
 默认情况下脚本只运行确定性的 `balanced_tactic.py`，不会连接任何 LLM。打开自适应模式后，主战术仍然是唯一的行动权威：每个 Turn 先根据当前可见状态生成并提交一份完整计划，提交完成后才把脱敏遥测写入本地队列。到达 Tick/时间间隔后，后台线程才启动两阶段循环：
 
-1. **评估模型**读取仓库内置的 `skills/arena-hero` v0.14 完整规则/SDK 包、聚合事件和 Beacon/经济/战斗 scorecard，输出缺陷、规则风险和改进建议。它会看到零资源 Tick、空闲 Worker、路线停滞、两格振荡和 runner 推进等指标。
-2. **重设计模型**读取完全相同且带 SHA-256 指纹的项目内规则包、当前 `StrategyProfile` 和上一步评估，只能输出有限 JSON 参数（Worker 目标、经济启动规模、Beacon 任务半径/租约、资源 TTL/停滞阈值、战斗倾向、载体安全余量等）。它不能提交行动、写 Python、执行 Shell 或读取迷雾信息；系统不会执行 LLM 生成的 Python。
+1. **评估模型**读取仓库内置的 `skills/arena-hero` v0.14 完整规则/SDK 包、聚合事件和 Beacon/经济/防御/战斗 scorecard，输出缺陷、规则风险和改进建议。它会看到零资源 Tick、空闲 Worker、路线停滞、两格振荡、runner 推进、Core 威胁/致命暴露、实际 Core 伤害、守军覆盖和 Worker 疏散等指标。
+2. **重设计模型**读取完全相同且带 SHA-256 指纹的项目内规则包、当前 `StrategyProfile` 和上一步评估，只能输出有限 JSON 参数（Worker 目标、经济启动规模、Beacon 任务半径/租约、资源 TTL/停滞阈值、战斗倾向、载体安全余量、常备守军规模、观察圈和 Worker 疏散半径等）。它不能提交行动、写 Python、执行 Shell 或读取迷雾信息；系统不会执行 LLM 生成的 Python。
 
-候选参数会在本地做 schema、范围、规则指纹和 Beacon/经济下限校验，再以 Turn 边界替换配置。后续周期用同一 scorecard 做金丝雀比较；分数按配置比例下降时自动**回滚**到上一份 profile。LLM 只接收聚合对象/行动计数和事件数值，不接收玩家名、对象 ID、精确坐标或路线目标。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。内部 score 会奖励 Beacon、采集、存入、战斗和 runner 推进，并惩罚零资源停滞、空闲 Worker、卡路与振荡；它只是调参信号，不是官方总榜，也不能保证固定第一名。
+候选参数会在本地做 schema、范围、规则指纹和 Beacon/经济下限校验，再以 Turn 边界替换配置。后续周期用同一 scorecard 做金丝雀比较；分数按配置比例下降时自动**回滚**到上一份 profile。LLM 只接收聚合对象/行动计数和事件数值，不接收玩家名、对象 ID、精确坐标或路线目标。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。内部 score 会奖励 Beacon、采集、存入、战斗、runner 推进、守军覆盖和有效疏散，并惩罚零资源停滞、卡路、Core 受伤和致命暴露；守军正向权重很小，防止为了刷分永久龟缩。它只是调参信号，不是官方总榜，也不能保证固定第一名。
 
 ### 本地 `.env` 配置（推荐）
 
@@ -193,18 +194,29 @@ python .\balanced_tactic.py
 | 对象 | 决策重点 |
 | --- | --- |
 | Core | 静止时才接受存入、治疗、修盾或生产；无 upkeep，价格通过 `unit_cost(unit_type, population)` 计算，不主动发起迁移。 |
-| Ranger | 敌方 Beacon carrier > 威胁己方 Beacon carrier 的敌人 > 敌方 Core > 其他敌人；对 carrier/Core 使用精确目标射击，预测位置使用合法 target-free cell fire。 |
-| Vanguard | 先 Sweep 相邻敌方 carrier，再处理威胁己方 carrier 的格、敌方 Core 和其他目标；无真实目标时才 Sweep 可见敌人可能进入的相邻预测格。 |
-| Worker | 生存/载货返航 > 当前格采集 > 一对一资源路线 > 八方向环形侦察；己方 carrier 优先保命/回 Core。资源线索过期、停滞或振荡时自动换目标。 |
+| Ranger | 致命 Core 攻击者 > 敌方 Beacon carrier > 威胁己方 carrier 的敌人 > 其他 Core 攻击/逼近者 > 敌方 Core；对 carrier/Core 使用精确目标射击。被选为守军时保持 Core 2–3 格防区。 |
+| Vanguard | 使用相同目标层级 Sweep 相邻格；被选为守军时保持 Core 1–2 格防区。无威胁时只保留小型守军，其余单位继续护送、抢 Beacon 和进攻。 |
+| Worker | 生存/载货返航 > 当前格采集 > 一对一资源路线 > 八方向环形侦察；己方 carrier 优先保命/回 Core。Core 正在受击且 Worker 也处于近 Core 火线时，优先移到当前可见攻击数为 0 的侧翼。 |
 | Beacon | 只有当前状态为 `GROUND` 且同格才拾取；远程任务通常要等 6 Worker 经济启动，近距离可见地面 Beacon 可机会性抢取；状态未知时不猜测 carrier 或 ground。 |
 
 每个 Turn 的高层优先级是：
 
 1. 处理同格 Beacon 拾取和 carrier 生存动作。
-2. 处理敌方 Beacon carrier/Core 的直接攻击与预测格攻击。
-3. 先维持 Worker 的存入、采集、独占资源分配与分散探索；只有经济就绪或近距离明确机会时才租用 Beacon runner，并持续检查其进度。
-4. 为 Core HP、可预见的非致命伤害和 Beacon carrier 恢复预留资源；普通 Unit heal 只使用剩余预算，必要时允许同格 Beacon carrier 预排一次满血/战后 HEAL，再执行 Core HEAL/REPAIR。
-5. 使用 v0.14 动态价格按 6W → 1V1R → 12W → 3V4R → 23W 的阶段扩军，成熟后保持 Ranger 偏重并补 Vanguard 护卫。
+2. 计算 Core `CLEAR/WATCH/APPROACH/ATTACK/LETHAL` 状态；致命攻击者优先清除，逼近时召回战斗单位。
+3. 处理敌方 Beacon carrier、威胁己方 carrier 的敌人、其他 Core 攻击者和敌方 Core。
+4. 维持 Worker 存入、采集、独占资源分配与分散探索；Core 火线上的受威胁 Worker 改向安全侧翼疏散。
+5. 为 Core HP、可预见的非致命伤害和 Beacon carrier 恢复预留资源；普通 Unit heal 只使用剩余预算。
+6. 无威胁时按 6W → 1V1R → 12W → 3V4R → 23W 扩军；`APPROACH+` 暂停 Worker，优先补足 1 Vanguard + 2 Ranger 守军并继续补战斗单位。
+
+### 动态防御等级
+
+| 等级 | 当前可见判定 | 响应 |
+| --- | --- | --- |
+| `CLEAR` | Core 观察圈内无战斗敌军 | 只保留最小守军，其余单位继续 Beacon、经济和进攻任务 |
+| `WATCH` | 敌军进入观察圈，但下一步尚不能形成攻击位 | 守军不远征，不停止正常经济 |
+| `APPROACH` | 敌军移动一步后可合法攻击 Core | 非载体战斗单位回防，暂停 Worker 生产，补 Vanguard/Ranger |
+| `ATTACK` | 敌军当前可合法攻击 Core | 提升攻击者目标优先级，近 Core 受击 Worker 撤到可见安全侧翼 |
+| `LETHAL` | 可见合法攻击数 ≥ Core HP + shield | 当前 Core 攻击者成为最高优先目标；不假设战后 HEAL/REPAIR 能救致死伤害 |
 
 ### 生产倾向
 
@@ -237,11 +249,12 @@ python -m pip install pytest
 
 - Ranger 射击范围、对齐和障碍判断。
 - Vanguard 相邻目标选择。
+- Core 五级威胁分类、Ranger 障碍射线、守军稳定选择、致命攻击者优先、回防、战时生产和 Worker 安全侧翼疏散。
 - Worker 采集、存入、最小成本一对一分配、八方向探索、TTL、卡路冷却、两格振荡恢复和受威胁撤退。
 - 单位/Core 恢复（含战后预防性 HEAL）、有租期 Beacon runner/carrier、分阶段 23/3/4 扩军、预测射击/扫击和动态生产价格。
 - Core 移动时禁止存入和生产。
 - API key 不被打印，以及每个 Turn 只提交一次计划。
-- 项目内置 Arena Hero skill 的完整性/优先级、两阶段 evaluator/designer 规则指纹、聚合经济评分、LLM 提示脱敏、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
+- 项目内置 Arena Hero skill 的完整性/优先级、两阶段 evaluator/designer 规则指纹、聚合经济/防御评分、LLM 提示脱敏、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
 
 也可以运行依赖和差异检查：
 
@@ -328,6 +341,7 @@ git push -u origin main
 | 文件 | 用途 |
 | --- | --- |
 | [balanced_tactic.py](balanced_tactic.py) | 战术决策、API key 读取和持续运行入口。 |
+| [defense_strategy.py](defense_strategy.py) | 当前可见 Core 威胁分级、攻击几何和确定性守军选择。 |
 | [economic_strategy.py](economic_strategy.py) | 有界资源记忆、一对一分配、环形侦察、路线进度与 runner 租约。 |
 | [strategy_policy.py](strategy_policy.py) | 有范围约束的 `StrategyProfile` 与 Beacon/经济 score 计算。 |
 | [adaptive_strategy.py](adaptive_strategy.py) | 脱敏遥测、规则指纹、双 LLM 协调器、金丝雀回滚与禁用模式。 |
@@ -335,6 +349,7 @@ git push -u origin main
 | [requirements.txt](requirements.txt) | Arena Hero Python SDK 版本约束。 |
 | [test_balanced_tactic.py](test_balanced_tactic.py) | 无需真实连接的行为测试。 |
 | [test_economic_strategy.py](test_economic_strategy.py) | 经济分配、探索、停滞、振荡与 runner 租约测试。 |
+| [test_defense_strategy.py](test_defense_strategy.py) | 威胁等级、障碍射线与守军选择纯逻辑测试。 |
 | [test_adaptive_strategy.py](test_adaptive_strategy.py) | 自适应遥测、评分、传输和回滚测试。 |
 | [LICENSE](LICENSE) | GNU GPL v3 许可证全文。 |
 

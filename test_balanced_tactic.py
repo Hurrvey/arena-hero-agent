@@ -215,7 +215,7 @@ def test_ranger_does_not_shoot_through_a_visible_obstacle() -> None:
 
     choose_actions(turn)
 
-    assert ranger.actions == []
+    assert all(action[0] != "SHOOT" for action in ranger.actions)
 
 
 def test_defense_memory_is_recomputed_from_each_visible_turn() -> None:
@@ -257,6 +257,35 @@ def test_defense_memory_is_recomputed_from_each_visible_turn() -> None:
 
     assert memory.defense.level is ThreatLevel.CLEAR
     assert memory.defense.watch_ids == frozenset()
+
+
+def test_same_tick_beacon_carrier_is_removed_from_defender_roster() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=5
+    )
+    carrier = FakeController(
+        object_id=UUID(int=1),
+        position=(1, 0),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    defender = FakeController(
+        object_id=UUID(int=2),
+        position=(2, 0),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    memory = TacticMemory()
+    turn = make_turn(
+        core=core,
+        units=(carrier, defender),
+        beacon=SimpleNamespace(position=(1, 0), status="GROUND", carrier_id=None),
+    )
+
+    choose_actions(turn, memory)
+
+    assert carrier.actions == [("PICKUP_BEACON",)]
+    assert memory.defenders.vanguard_ids == frozenset({defender.id})
 
 
 def test_ranger_shoots_a_lethal_core_attacker_before_enemy_core() -> None:
@@ -356,6 +385,58 @@ def test_only_selected_clear_state_defender_is_recalled_to_core() -> None:
     assert far.actions == []
 
 
+def test_in_ring_defender_holds_position_instead_of_chasing_enemy_core() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    ranger = FakeController(
+        object_id=UUID(int=1),
+        position=(3, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    enemy_core = SimpleNamespace(
+        kind="CORE", id=UUID(int=200), position=(8, 0), hp=5, shield=5
+    )
+    memory = TacticMemory(
+        policy=StrategyProfile.default().with_updates(defender_ranger_target=1)
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        enemies=(enemy_core,),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn, memory)
+
+    assert ranger.actions == []
+
+
+def test_too_close_defender_moves_out_to_its_defense_ring() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    ranger = FakeController(
+        object_id=UUID(int=1),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    memory = TacticMemory(
+        policy=StrategyProfile.default().with_updates(defender_ranger_target=1)
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn, memory)
+
+    assert ranger.actions == [("MOVE", Direction.RIGHT)]
+
+
 def test_approaching_enemy_recalls_noncarrier_combat_units_to_core() -> None:
     core = FakeController(
         object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
@@ -399,6 +480,39 @@ def test_approaching_enemy_recalls_noncarrier_combat_units_to_core() -> None:
 
     assert ranger.actions == [("MOVE", Direction.LEFT)]
     assert vanguard.actions == [("MOVE", Direction.UP)]
+
+
+def test_approach_recall_outranks_unrelated_enemy_core_shot() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    ranger = FakeController(
+        object_id=UUID(int=1),
+        position=(6, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    approacher = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        id=UUID(int=200),
+        position=(2, 0),
+        hp=4,
+        shield=0,
+    )
+    enemy_core = SimpleNamespace(
+        kind="CORE", id=UUID(int=201), position=(6, 3), hp=5, shield=5
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        enemies=(approacher, enemy_core),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn)
+
+    assert ranger.actions == [("MOVE", Direction.LEFT)]
 
 
 def test_threatened_near_core_worker_evacuates_to_safe_flank() -> None:
@@ -462,6 +576,38 @@ def test_blocked_near_core_worker_waits_instead_of_entering_core_fire() -> None:
     assert worker.actions == []
 
 
+def test_blocked_cargo_worker_at_core_deposits_when_evacuation_is_impossible() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    worker = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=1,
+    )
+    attacker = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        id=UUID(int=200),
+        position=(0, 3),
+        hp=2,
+        shield=0,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        enemies=(attacker,),
+        obstacle_cells={(-1, 0), (1, 0), (0, -1)},
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("DEPOSIT",)]
+
+
 def test_approach_state_pauses_workers_and_spawns_missing_defender() -> None:
     core = FakeController(
         object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
@@ -502,7 +648,7 @@ def test_planner_exports_aggregate_defense_diagnostics() -> None:
     )
     vanguard = FakeController(
         object_id=UUID(int=1),
-        position=(2, 2),
+        position=(1, 1),
         hp=4,
         unit_type=UnitType.VANGUARD,
     )
@@ -546,6 +692,88 @@ def test_planner_exports_aggregate_defense_diagnostics() -> None:
     assert memory.economy_diagnostics["incoming_core_damage"] == 2
     assert memory.economy_diagnostics["defender_coverage"] == 1
     assert memory.economy_diagnostics["worker_evacuations"] == 1
+
+
+def test_out_of_ring_defender_is_not_counted_as_coverage() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    ranger = FakeController(
+        object_id=UUID(int=1),
+        position=(6, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    memory = TacticMemory(
+        policy=StrategyProfile.default().with_updates(defender_ranger_target=1)
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn, memory)
+
+    assert memory.defenders.ranger_ids == frozenset({ranger.id})
+    assert memory.economy_diagnostics["defender_coverage"] == 0
+
+
+def test_too_close_ranger_is_not_counted_as_defender_coverage() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    ranger = FakeController(
+        object_id=UUID(int=1),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    memory = TacticMemory(
+        policy=StrategyProfile.default().with_updates(defender_ranger_target=1)
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn, memory)
+
+    assert memory.economy_diagnostics["defender_coverage"] == 0
+
+
+def test_final_core_migration_assesses_threat_at_combat_destination() -> None:
+    core = FakeController(
+        object_id=UUID(int=100),
+        position=(0, 0),
+        hp=5,
+        shield=5,
+        state="MOVING",
+    )
+    core.view.kind = "CORE"
+    core.view.destination = (1, 0)
+    core.view.move_progress = 3
+    core.view.move_required_ticks = 4
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        id=UUID(int=200),
+        position=(2, 0),
+        hp=4,
+        shield=0,
+    )
+    memory = TacticMemory()
+    turn = make_turn(
+        core=core,
+        enemies=(enemy,),
+        beacon=SimpleNamespace(position=(100, 100), status=None, carrier_id=None),
+    )
+
+    choose_actions(turn, memory)
+
+    assert memory.defense.level is ThreatLevel.ATTACK
+    assert memory.defense.attacker_ids == frozenset({enemy.id})
 
 
 def test_vanguard_sweeps_the_adjacent_cell_with_most_hostiles() -> None:
@@ -1628,8 +1856,9 @@ def test_beacon_drop_event_clears_carrier_memory() -> None:
 
     assert memory.carrier_id is None
     # A hidden status is only a scouting hint; a combat Unit must not blindly
-    # chase the public coordinate after dropping Beacon.
-    assert carrier.actions == []
+    # chase the public coordinate after dropping Beacon. It may take one step
+    # to establish its assigned Vanguard defense ring around the Core.
+    assert carrier.actions == [("MOVE", Direction.RIGHT)]
 
 
 def test_visible_enemy_beacon_carrier_is_highest_ranger_target() -> None:
@@ -1850,7 +2079,7 @@ def test_vanguard_intercepts_visible_threat_to_beacon_carrier_before_core() -> N
     assert vanguard.actions == [("SWEEP", Direction.DOWN)]
 
 
-def test_combat_unit_moves_toward_visible_enemy_core_when_out_of_range() -> None:
+def test_selected_defender_establishes_ring_before_chasing_enemy_core() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),
         position=(0, 0),
@@ -1873,7 +2102,7 @@ def test_combat_unit_moves_toward_visible_enemy_core_when_out_of_range() -> None
 
     choose_actions(turn)
 
-    assert ranger.actions == [("MOVE", Direction.DOWN)]
+    assert ranger.actions == [("MOVE", Direction.RIGHT)]
 
 
 def test_zero_observed_resources_still_queues_a_unit_heal() -> None:

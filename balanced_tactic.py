@@ -410,8 +410,9 @@ def _refresh_defense_state(turn, memory: TacticMemory) -> None:
         memory.defense = DefenseAssessment.clear()
         memory.defenders = DefenderRoster.empty()
         return
+    defense_position = _core_combat_position(core, turn, memory)
     memory.defense = assess_core_defense(
-        core.position,
+        defense_position,
         int(getattr(core, "hp", 0) or 0),
         int(getattr(core, "shield", 0) or 0),
         getattr(turn, "visible_enemies", ()) or (),
@@ -426,6 +427,54 @@ def _refresh_defense_state(turn, memory: TacticMemory) -> None:
         vanguard_target=int(memory.policy.defender_vanguard_target),
         ranger_target=int(memory.policy.defender_ranger_target),
     )
+
+
+def _refresh_defender_roster(turn, memory: TacticMemory) -> None:
+    """Refresh role selection after a same-Tick Beacon pickup intent."""
+
+    core = getattr(turn, "core", None)
+    if core is None:
+        memory.defenders = DefenderRoster.empty()
+        return
+    carrier = _owned_beacon_carrier(turn, memory)
+    memory.defenders = select_defenders(
+        _core_combat_position(core, turn, memory),
+        tuple(getattr(turn, "units", ()) or ()),
+        carrier_id=getattr(carrier, "id", None),
+        vanguard_target=int(memory.policy.defender_vanguard_target),
+        ranger_target=int(memory.policy.defender_ranger_target),
+    )
+
+
+def _core_combat_position(core, turn, memory: TacticMemory) -> tuple[int, int]:
+    """Return the cell where the Core will be when combat resolves."""
+
+    view = getattr(core, "view", None)
+    state = _enum_name(getattr(core, "state", getattr(view, "state", None)))
+    destination = getattr(core, "destination", getattr(view, "destination", None))
+    progress = getattr(
+        core,
+        "move_progress",
+        getattr(view, "move_progress", None),
+    )
+    required = getattr(
+        core,
+        "move_required_ticks",
+        getattr(view, "move_required_ticks", None),
+    )
+    obstacles = _obstacles_for(turn, memory)
+    if (
+        state == "MOVING"
+        and destination is not None
+        and progress is not None
+        and required is not None
+        and int(progress) + 1 >= int(required)
+        and destination not in obstacles
+        and destination not in set(getattr(turn, "resource_cells", ()) or ())
+        and not _visible_destination_conflict(core, destination, turn)
+    ):
+        return destination
+    return core.position
 
 
 def _update_economy_diagnostics(
@@ -476,6 +525,23 @@ def _update_economy_diagnostics(
         detect_two_cell_oscillation(history)
         for history in memory.economy.worker_history.values()
     )
+    core = getattr(turn, "core", None)
+    defender_coverage = 0
+    if core is not None:
+        for unit in getattr(turn, "units", ()) or ():
+            if not _id_in(unit.id, memory.defenders.all_ids):
+                continue
+            minimum, maximum = (
+                (1, 2)
+                if _enum_name(getattr(unit, "unit_type", None)) == "VANGUARD"
+                else (2, 3)
+            )
+            distance = _distance(
+                unit.position,
+                _core_combat_position(core, turn, memory),
+            )
+            if minimum <= distance <= maximum:
+                defender_coverage += 1
     memory.economy_diagnostics = {
         "visible_resource_count": len(
             set(getattr(turn, "resource_cells", ()) or ())
@@ -493,7 +559,7 @@ def _update_economy_diagnostics(
             memory.defense.level is ThreatLevel.LETHAL
         ),
         "incoming_core_damage": memory.defense.incoming_damage,
-        "defender_coverage": len(memory.defenders.all_ids),
+        "defender_coverage": defender_coverage,
         "worker_evacuations": memory.worker_evacuations,
     }
 
@@ -1528,11 +1594,23 @@ def _defense_goal(unit, turn, memory: TacticMemory):
     if carrier is not None and _same_id(unit.id, carrier.id):
         return None
     unit_type = _enum_name(getattr(unit, "unit_type", None))
-    defensive_radius = 2 if unit_type == "VANGUARD" else 3
+    minimum, maximum = (1, 2) if unit_type == "VANGUARD" else (2, 3)
     selected = _id_in(unit.id, memory.defenders.all_ids)
     full_recall = memory.defense.level >= ThreatLevel.APPROACH
-    if (selected or full_recall) and _distance(unit.position, core.position) > defensive_radius:
-        return core.position, False
+    core_position = _core_combat_position(core, turn, memory)
+    distance = _distance(unit.position, core_position)
+    if (selected or full_recall) and distance > maximum:
+        return core_position, False
+    if selected and distance < minimum:
+        dx = unit.position[0] - core_position[0]
+        dy = unit.position[1] - core_position[1]
+        if dx == 0 and dy == 0:
+            return (core_position[0] + minimum, core_position[1]), False
+        goal = (
+            core_position[0] + (minimum if dx > 0 else -minimum if dx < 0 else 0),
+            core_position[1] + (minimum if dy > 0 else -minimum if dy < 0 else 0),
+        )
+        return goal, False
     return None
 
 
@@ -1567,6 +1645,12 @@ def _combat_goal(unit, turn, memory: TacticMemory, runner):
 
     if defense_goal is not None:
         return defense_goal
+
+    # A selected defender already inside its exact ring holds the post. Direct
+    # legal attacks were handled before this movement goal, but it does not
+    # chase remote Cores, runners, or carriers out of position.
+    if _id_in(unit.id, memory.defenders.all_ids):
+        return None
 
     enemy_cores = [enemy for enemy in turn.visible_enemies if _is_core_view(enemy)]
     if enemy_cores:
@@ -1660,6 +1744,11 @@ def _queue_ranger_actions(
                 reserved_destinations,
             ):
                 continue
+        defense_goal = _defense_goal(ranger, turn, memory)
+        urgent_recall = bool(
+            memory.defense.level >= ThreatLevel.APPROACH
+            and defense_goal is not None
+        )
         legal_targets = [
             enemy
             for enemy in enemies
@@ -1667,6 +1756,25 @@ def _queue_ranger_actions(
             and not _core_completes_move_next_tick(enemy, turn, obstacles)
             and _line_is_clear(ranger.position, enemy.position, obstacles)
         ]
+        if urgent_recall:
+            legal_targets = [
+                enemy
+                for enemy in legal_targets
+                if _id_in(enemy.id, memory.defense.attacker_ids)
+                or _id_in(enemy.id, memory.defense.approacher_ids)
+                or _same_id(
+                    enemy.id,
+                    getattr(_visible_enemy_carrier(turn), "id", None),
+                )
+                or (
+                    own_carrier is not None
+                    and _enemy_can_attack_cell(
+                        enemy,
+                        own_carrier.position,
+                        obstacles,
+                    )
+                )
+            ]
         if legal_targets:
             target = min(
                 legal_targets,
@@ -1825,11 +1933,33 @@ def _queue_vanguard_actions(
                 reserved_destinations,
             ):
                 continue
+        defense_goal = _defense_goal(vanguard, turn, memory)
+        urgent_recall = bool(
+            memory.defense.level >= ThreatLevel.APPROACH
+            and defense_goal is not None
+        )
         by_cell: dict[tuple[int, int], list[object]] = defaultdict(list)
         for enemy in enemies:
             if (
                 _distance(vanguard.position, enemy.position) == 1
                 and not _core_completes_move_next_tick(enemy, turn, obstacles)
+                and (
+                    not urgent_recall
+                    or _id_in(enemy.id, memory.defense.attacker_ids)
+                    or _id_in(enemy.id, memory.defense.approacher_ids)
+                    or _same_id(
+                        enemy.id,
+                        getattr(_visible_enemy_carrier(turn), "id", None),
+                    )
+                    or (
+                        own_carrier is not None
+                        and _enemy_can_attack_cell(
+                            enemy,
+                            own_carrier.position,
+                            obstacles,
+                        )
+                    )
+                )
             ):
                 by_cell[enemy.position].append(enemy)
         candidates: list[tuple[tuple[object, ...], Direction]] = []
@@ -2135,7 +2265,7 @@ def _queue_worker_actions(
             and worker_threatened
         )
         if defensive_evacuation:
-            _evacuate_worker_from_core_front(
+            evacuated = _evacuate_worker_from_core_front(
                 worker,
                 turn,
                 memory,
@@ -2147,8 +2277,22 @@ def _queue_worker_actions(
                 planned_moves,
                 obstacles,
             )
+            if (
+                not evacuated
+                and worker.cargo
+                and stationary_core
+                and worker.position == core_position
+                and pending_space > 0
+            ):
+                worker.deposit()
+                acted.add(worker.id)
+                deposited = min(int(worker.cargo or 0), pending_space)
+                pending_deposit += deposited
+                pending_space -= deposited
             # If every flank is blocked or visibly threatened, WAIT instead
-            # of leading the Worker onto the attacked Core cell.
+            # of leading an empty Worker onto the attacked Core cell. A loaded
+            # Worker on the Core still deposits before combat when it cannot
+            # escape, preserving resources instead of losing both outcomes.
             continue
         (
             _preview_type,
@@ -2901,6 +3045,7 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     # Worker standing on Beacon+RESOURCE never spends the Tick harvesting.
     core_action_selected = _queue_beacon_pickup(turn, memory, acted, False)
     own_carrier = _owned_beacon_carrier(turn, memory)
+    _refresh_defender_roster(turn, memory)
     # The submitted pickup is not reflected in this Turn's authoritative view
     # yet.  Treat the selected controlled object as the prospective carrier so
     # we do not assign a second runner or spend its action on economy.

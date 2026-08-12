@@ -633,8 +633,15 @@ class Scorecard:
     core_damage_taken: float = 0
     _event_ids: set[str] = field(default_factory=set, repr=False, compare=False)
     _ticks: set[int] = field(default_factory=set, repr=False, compare=False)
+    _controlled_core_ids: set[str] = field(default_factory=set, repr=False, compare=False)
 
     def ingest(self, record: Mapping[str, Any]) -> None:
+        core = record.get("core")
+        controlled_core_id = (
+            core.get("id") if isinstance(core, Mapping) else None
+        )
+        if controlled_core_id is not None:
+            self._controlled_core_ids.add(str(controlled_core_id))
         tick = record.get("tick")
         if isinstance(tick, int) and tick >= 0 and tick not in self._ticks:
             self._ticks.add(tick)
@@ -693,7 +700,11 @@ class Scorecard:
                 self.resources_captured += _number(values, "amount")
             elif event_type == "SHOT_HIT":
                 self.damage_dealt += _number(values, "damage")
-            elif event_type == "CORE_DAMAGED":
+            elif (
+                event_type == "CORE_DAMAGED"
+                and event.get("target_id") is not None
+                and str(event.get("target_id")) in self._controlled_core_ids
+            ):
                 self.core_damage_taken += _number(values, "damage")
             elif event_type == "SWEEP_RESOLVED":
                 self.sweep_resolved += 1
