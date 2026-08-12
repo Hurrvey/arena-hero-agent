@@ -236,6 +236,7 @@ class TacticMemory:
     economy_diagnostics: dict[str, object] = field(default_factory=dict)
     defense: DefenseAssessment = field(default_factory=DefenseAssessment.clear)
     defenders: DefenderRoster = field(default_factory=DefenderRoster.empty)
+    worker_evacuations: int = 0
 
     def observe(self, turn) -> None:
         # A plan is scoped to one complete Turn.  Never carry a speculative
@@ -736,6 +737,89 @@ def _escape_core_cell(
             _mark_planned_carrier_move(memory, turn, unit)
         return True
     return False
+
+
+def _worker_evacuation_candidate(
+    worker,
+    turn,
+    occupied: tuple[tuple[object, tuple[int, int]], ...],
+    reserved_destinations: set[tuple[int, int]],
+    obstacles: Iterable[tuple[int, int]],
+) -> tuple[Direction, tuple[int, int], int] | None:
+    """Choose a currently safe flank that does not enter the Core cell."""
+
+    core = getattr(turn, "core", None)
+    if core is None:
+        return None
+    enemies = tuple(getattr(turn, "visible_enemies", ()) or ())
+    candidates = []
+    for index, direction, destination, occupancy in _candidate_steps(
+        worker,
+        turn,
+        occupied,
+        reserved_destinations,
+        obstacles,
+    ):
+        if destination == core.position:
+            continue
+        attacks = _visible_attack_count(destination, enemies, obstacles)
+        if attacks != 0:
+            continue
+        candidates.append(
+            (
+                (
+                    -_distance(destination, core.position),
+                    -_nearest_enemy_distance(destination, enemies),
+                    occupancy,
+                    index,
+                ),
+                direction,
+                destination,
+                occupancy,
+            )
+        )
+    if not candidates:
+        return None
+    _, direction, destination, occupancy = min(candidates, key=lambda item: item[0])
+    return direction, destination, occupancy
+
+
+def _evacuate_worker_from_core_front(
+    worker,
+    turn,
+    memory: TacticMemory,
+    acted: set[object],
+    occupied: tuple[tuple[object, tuple[int, int]], ...],
+    reserved_destinations: set[tuple[int, int]],
+    planned_from_core: set[object],
+    planned_into_core: set[object],
+    planned_moves: dict[bytes, tuple[int, int]],
+    obstacles: Iterable[tuple[int, int]],
+) -> bool:
+    """Move a threatened nearby Worker onto a currently safe flank."""
+
+    candidate = _worker_evacuation_candidate(
+        worker,
+        turn,
+        occupied,
+        reserved_destinations,
+        obstacles,
+    )
+    if candidate is None:
+        return False
+    direction, destination, occupancy = candidate
+    core = turn.core
+    worker.move(direction)
+    acted.add(worker.id)
+    reserved_destinations.add(destination)
+    if worker.position == core.position:
+        planned_from_core.add(worker.id)
+    if destination == core.position:
+        planned_into_core.add(worker.id)
+    if occupancy == 0:
+        planned_moves[_uuid_key(worker.id)] = destination
+    memory.worker_evacuations += 1
+    return True
 
 
 def _core_ready_for_spawn(turn, memory: TacticMemory | None = None) -> bool:
@@ -1256,6 +1340,10 @@ def _enemy_effective_hp(enemy) -> int:
     return int(getattr(enemy, "hp", 0)) + int(getattr(enemy, "shield", 0) or 0)
 
 
+def _id_in(identifier, identifiers: Iterable[object]) -> bool:
+    return any(_same_id(identifier, candidate) for candidate in identifiers)
+
+
 def _combat_target_rank(
     enemy,
     turn,
@@ -1270,17 +1358,36 @@ def _combat_target_rank(
         own_carrier is not None
         and _enemy_can_attack_cell(enemy, own_carrier.position, obstacles)
     )
-    # Enemy Beacon carrier > enemy Core > a low-HP Unit.  The first two ranks
-    # are score objectives; an attacker threatening our carrier is promoted so
-    # Beacon ticks are not traded for a speculative Core hit.
+    is_core_attacker = _id_in(
+        getattr(enemy, "id", None),
+        memory.defense.attacker_ids if memory is not None else (),
+    )
+    is_core_approacher = _id_in(
+        getattr(enemy, "id", None),
+        memory.defense.approacher_ids if memory is not None else (),
+    )
+    lethal_core_attacker = bool(
+        memory is not None
+        and memory.defense.level is ThreatLevel.LETHAL
+        and is_core_attacker
+    )
+    # Only a visible attacker that can remove the Core this Tick outranks the
+    # enemy Beacon carrier.  Otherwise preserve Beacon control, then remove
+    # threats to our carrier/Core before ordinary Core pressure.
     priority = (
         0
-        if is_carrier
+        if lethal_core_attacker
         else 1
-        if threatens_carrier
+        if is_carrier
         else 2
-        if kind == "CORE"
+        if threatens_carrier
         else 3
+        if is_core_attacker
+        else 4
+        if is_core_approacher
+        else 5
+        if kind == "CORE"
+        else 6
     )
     return (priority, _enemy_effective_hp(enemy), _uuid_key(enemy.id))
 
@@ -1405,21 +1512,53 @@ def _predicted_cells(turn, origin, memory: TacticMemory):
     return grouped
 
 
+def _defense_goal(unit, turn, memory: TacticMemory):
+    core = getattr(turn, "core", None)
+    if core is None:
+        return None
+    carrier = _owned_beacon_carrier(turn, memory)
+    if carrier is not None and _same_id(unit.id, carrier.id):
+        return None
+    unit_type = _enum_name(getattr(unit, "unit_type", None))
+    defensive_radius = 2 if unit_type == "VANGUARD" else 3
+    selected = _id_in(unit.id, memory.defenders.all_ids)
+    full_recall = memory.defense.level >= ThreatLevel.APPROACH
+    if (selected or full_recall) and _distance(unit.position, core.position) > defensive_radius:
+        return core.position, False
+    return None
+
+
 def _combat_goal(unit, turn, memory: TacticMemory, runner):
+    defense_goal = _defense_goal(unit, turn, memory)
+    if memory.defense.level >= ThreatLevel.APPROACH and defense_goal is not None:
+        return defense_goal
+
     enemy_carrier = _visible_enemy_carrier(turn)
     if enemy_carrier is not None:
         return enemy_carrier.position, False
 
     own_carrier = _owned_beacon_carrier(turn, memory)
+    core_is_carrier = bool(
+        own_carrier is not None
+        and getattr(turn, "core", None) is not None
+        and _same_id(own_carrier.id, turn.core.id)
+    )
     if own_carrier is not None:
         if _same_id(unit.id, own_carrier.id):
             core = turn.core
             if core is not None and unit.position != core.position:
                 return core.position, True
             return None
-        if _distance(unit.position, own_carrier.position) > 1:
+        # When the Core carries the Beacon, a small assigned defense ring is
+        # sufficient.  Pulling every combat Unit onto the Core would abandon
+        # economy pressure and prevent production.
+        if not core_is_carrier and _distance(unit.position, own_carrier.position) > 1:
             return own_carrier.position, False
-        return None
+        if not core_is_carrier:
+            return None
+
+    if defense_goal is not None:
+        return defense_goal
 
     enemy_cores = [enemy for enemy in turn.visible_enemies if _is_core_view(enemy)]
     if enemy_cores:
@@ -1543,7 +1682,11 @@ def _queue_ranger_actions(
             continue
 
         predicted = _predicted_cells(turn, ranger.position, memory)
-        if predicted and float(memory.policy.combat_priority) >= 0.75:
+        if (
+            predicted
+            and memory.defense.level < ThreatLevel.APPROACH
+            and float(memory.policy.combat_priority) >= 0.75
+        ):
             def prediction_rank(item):
                 cell, possible = item
                 has_carrier = any(
@@ -1688,32 +1831,12 @@ def _queue_vanguard_actions(
             direction = _direction_to_adjacent(vanguard.position, cell)
             if direction is None:
                 continue
-            contains_carrier = any(
-                _same_id(enemy.id, getattr(_visible_enemy_carrier(turn), "id", None))
-                for enemy in cell_enemies
-            )
-            threatens_carrier = (
-                own_carrier is not None
-                and any(
-                    _enemy_can_attack_cell(
-                        enemy,
-                        own_carrier.position,
-                        obstacles,
-                    )
-                    for enemy in cell_enemies
-                )
-            )
-            contains_core = any(_is_core_view(enemy) for enemy in cell_enemies)
             rank = (
-                0
-                if contains_carrier
-                else 1
-                if threatens_carrier
-                else 2
-                if contains_core
-                else 3,
+                min(
+                    _combat_target_rank(enemy, turn, memory, obstacles)
+                    for enemy in cell_enemies
+                ),
                 -len(cell_enemies),
-                min((_enemy_effective_hp(enemy) for enemy in cell_enemies), default=0),
                 direction_order[direction],
                 cell[0],
                 cell[1],
@@ -1738,7 +1861,11 @@ def _queue_vanguard_actions(
             ):
                 if _distance(vanguard.position, cell) == 1 and cell not in obstacles:
                     predicted_cells[cell].append(enemy)
-        if predicted_cells and float(memory.policy.combat_priority) >= 0.75:
+        if (
+            predicted_cells
+            and memory.defense.level < ThreatLevel.APPROACH
+            and float(memory.policy.combat_priority) >= 0.75
+        ):
             cell = min(
                 predicted_cells,
                 key=lambda position: (
@@ -1903,15 +2030,34 @@ def _queue_worker_actions(
             )
         ):
             continue
-        movement = _move_to_goal(
-            candidate,
-            core_position,
-            turn,
-            occupied,
-            projected_reservations,
-            retreat=True,
-            obstacles=obstacles,
+        defense_evacuation = bool(
+            memory.defense.level >= ThreatLevel.ATTACK
+            and _distance(candidate.position, core_position)
+            <= int(memory.policy.worker_evacuation_radius)
         )
+        if defense_evacuation:
+            evacuation = _worker_evacuation_candidate(
+                candidate,
+                turn,
+                occupied,
+                projected_reservations,
+                obstacles,
+            )
+            movement = (
+                (evacuation[0], evacuation[1])
+                if evacuation is not None
+                else None
+            )
+        else:
+            movement = _move_to_goal(
+                candidate,
+                core_position,
+                turn,
+                occupied,
+                projected_reservations,
+                retreat=True,
+                obstacles=obstacles,
+            )
         if movement is None:
             continue
         _, destination = movement
@@ -1972,6 +2118,30 @@ def _queue_worker_actions(
                 reserved_destinations,
             )
         )
+        defensive_evacuation = bool(
+            not is_carrier
+            and not is_runner
+            and memory.defense.level >= ThreatLevel.ATTACK
+            and _distance(worker.position, core_position)
+            <= int(memory.policy.worker_evacuation_radius)
+            and worker_threatened
+        )
+        if defensive_evacuation:
+            _evacuate_worker_from_core_front(
+                worker,
+                turn,
+                memory,
+                acted,
+                occupied,
+                reserved_destinations,
+                planned_from_core,
+                planned_into_core,
+                planned_moves,
+                obstacles,
+            )
+            # If every flank is blocked or visibly threatened, WAIT instead
+            # of leading the Worker onto the attacked Core cell.
+            continue
         (
             _preview_type,
             _current_spawn_cost,
@@ -2479,6 +2649,29 @@ def _desired_spawn_type(
     capacity = core_resource_capacity(population)
 
     profile = getattr(memory, "policy", StrategyProfile.default())
+    defense = getattr(memory, "defense", DefenseAssessment.clear())
+    if memory is not None and defense.level >= ThreatLevel.APPROACH:
+        if vanguards < profile.defender_vanguard_target:
+            priority = [UnitType.VANGUARD, UnitType.RANGER]
+        elif rangers < profile.defender_ranger_target:
+            priority = [UnitType.RANGER, UnitType.VANGUARD]
+        elif rangers <= (
+            profile.ranger_ratio / profile.defense_priority
+        ) * max(1, vanguards):
+            priority = [UnitType.RANGER, UnitType.VANGUARD]
+        else:
+            priority = [UnitType.VANGUARD, UnitType.RANGER]
+        for unit_type in priority:
+            if _unit_price(unit_type, population) <= capacity:
+                return unit_type
+        # Wartime pauses Workers even when every combat price has exceeded
+        # storage capacity. Returning the cheaper combat type makes the Core
+        # safely WAIT instead of expanding economy during an active approach.
+        return min(
+            priority,
+            key=lambda unit_type: _unit_price(unit_type, population),
+        )
+
     bootstrap_target = min(profile.worker_target, profile.bootstrap_worker_target)
     mature_worker_target = min(profile.worker_target, 12)
     if workers < bootstrap_target:
@@ -2652,6 +2845,7 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
 
     memory = memory or TacticMemory()
     memory.observe(turn)
+    memory.worker_evacuations = 0
     if turn.core is None:
         _refresh_defense_state(turn, memory)
         memory.economy_diagnostics = {

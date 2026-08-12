@@ -259,6 +259,243 @@ def test_defense_memory_is_recomputed_from_each_visible_turn() -> None:
     assert memory.defense.watch_ids == frozenset()
 
 
+def test_ranger_shoots_a_lethal_core_attacker_before_enemy_core() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=1, shield=0
+    )
+    ranger = FakeController(
+        object_id=UUID(int=1),
+        position=(3, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    attacker = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        id=UUID(int=200),
+        position=(1, 0),
+        hp=4,
+        shield=0,
+    )
+    enemy_core = SimpleNamespace(
+        kind="CORE", id=UUID(int=300), position=(3, 3), hp=5, shield=5
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        enemies=(attacker, enemy_core),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn)
+
+    assert ranger.actions == [("SHOOT", attacker.position)]
+
+
+def test_vanguard_sweeps_a_lethal_core_attacker_before_enemy_core() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=1, shield=0
+    )
+    vanguard = FakeController(
+        object_id=UUID(int=1),
+        position=(1, 1),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    attacker = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        id=UUID(int=200),
+        position=(1, 0),
+        hp=4,
+        shield=0,
+    )
+    enemy_core = SimpleNamespace(
+        kind="CORE", id=UUID(int=300), position=(2, 1), hp=5, shield=5
+    )
+    turn = make_turn(
+        core=core,
+        units=(vanguard,),
+        enemies=(attacker, enemy_core),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn)
+
+    assert vanguard.actions == [("SWEEP", Direction.UP)]
+
+
+def test_only_selected_clear_state_defender_is_recalled_to_core() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    near = FakeController(
+        object_id=UUID(int=1),
+        position=(4, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    far = FakeController(
+        object_id=UUID(int=2),
+        position=(6, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    memory = TacticMemory(
+        policy=StrategyProfile.default().with_updates(defender_ranger_target=1)
+    )
+    turn = make_turn(
+        core=core,
+        units=(near, far),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn, memory)
+
+    assert near.actions == [("MOVE", Direction.LEFT)]
+    assert far.actions == []
+
+
+def test_approaching_enemy_recalls_noncarrier_combat_units_to_core() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    carrier = FakeController(
+        object_id=UUID(int=3),
+        position=(8, 8),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    ranger = FakeController(
+        object_id=UUID(int=1),
+        position=(6, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    vanguard = FakeController(
+        object_id=UUID(int=2),
+        position=(0, 6),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    approacher = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        id=UUID(int=200),
+        position=(2, 0),
+        hp=4,
+        shield=0,
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger, vanguard, carrier),
+        enemies=(approacher,),
+        beacon=SimpleNamespace(
+            position=carrier.position, status="CARRIED", carrier_id=carrier.id
+        ),
+    )
+
+    choose_actions(turn)
+
+    assert ranger.actions == [("MOVE", Direction.LEFT)]
+    assert vanguard.actions == [("MOVE", Direction.UP)]
+
+
+def test_threatened_near_core_worker_evacuates_to_safe_flank() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=5
+    )
+    worker = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 1),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    attacker = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        id=UUID(int=200),
+        position=(0, 3),
+        hp=2,
+        shield=0,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        enemies=(attacker,),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == [("MOVE", Direction.RIGHT)]
+
+
+def test_blocked_near_core_worker_waits_instead_of_entering_core_fire() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=5
+    )
+    worker = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 1),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    attacker = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        id=UUID(int=200),
+        position=(0, 3),
+        hp=2,
+        shield=0,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        enemies=(attacker,),
+        obstacle_cells={(-1, 1), (1, 1)},
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn)
+
+    assert worker.actions == []
+
+
+def test_approach_state_pauses_workers_and_spawns_missing_defender() -> None:
+    core = FakeController(
+        object_id=UUID(int=100), position=(0, 0), hp=5, shield=10
+    )
+    workers = tuple(
+        FakeController(
+            object_id=UUID(int=index + 1),
+            position=(10 + index, 10),
+            hp=2,
+            unit_type=UnitType.WORKER,
+        )
+        for index in range(4)
+    )
+    approacher = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        id=UUID(int=200),
+        position=(2, 0),
+        hp=4,
+        shield=0,
+    )
+    turn = make_turn(
+        core=core,
+        units=workers,
+        resources=10,
+        enemies=(approacher,),
+        beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
+    )
+
+    choose_actions(turn)
+
+    assert core.actions == [("SPAWN", UnitType.VANGUARD)]
+
+
 def test_vanguard_sweeps_the_adjacent_cell_with_most_hostiles() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),
@@ -2168,7 +2405,7 @@ def test_cargo_worker_vacates_for_a_price_lowered_by_remote_death() -> None:
     choose_actions(turn)
 
     assert cargo_worker.actions and cargo_worker.actions[0][0] == "MOVE"
-    assert core.actions == [("SPAWN", UnitType.WORKER)]
+    assert core.actions == [("SPAWN", UnitType.VANGUARD)]
 
 
 def test_safe_worker_move_is_not_counted_as_a_dynamic_price_death() -> None:
@@ -2486,7 +2723,9 @@ def test_fatal_carrier_drop_uses_post_drop_shield_cap_for_core_action() -> None:
     choose_actions(turn)
 
     assert carrier.actions == []
-    assert core.actions == [("SPAWN", UnitType.WORKER)]
+    # Active Core pressure pauses Worker production. The five resources cannot
+    # fund a combat defender, so waiting is preferable to economic expansion.
+    assert core.actions == []
 
 
 def test_safe_carrier_escape_keeps_beacon_shield_cap_for_core_repair() -> None:
