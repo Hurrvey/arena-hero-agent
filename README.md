@@ -155,7 +155,7 @@ ARENA_HERO_ADAPTIVE_INTERVAL_TICKS=60
 ARENA_HERO_ADAPTIVE_MIN_SECONDS=900
 ARENA_HERO_ADAPTIVE_AUTO_APPLY=1
 ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO=0.15
-ARENA_HERO_ADAPTIVE_STATE_DIR=.codex_tmp/adaptive
+ARENA_HERO_ADAPTIVE_STATE_DIR=adaptive
 ~~~
 
 ### 临时 PowerShell 覆盖（可选）
@@ -174,13 +174,13 @@ $env:ARENA_HERO_ADAPTIVE_INTERVAL_TICKS="60"
 $env:ARENA_HERO_ADAPTIVE_MIN_SECONDS="900"
 $env:ARENA_HERO_ADAPTIVE_AUTO_APPLY="1"
 $env:ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO="0.15"
-$env:ARENA_HERO_ADAPTIVE_STATE_DIR=".codex_tmp/adaptive"
+$env:ARENA_HERO_ADAPTIVE_STATE_DIR="adaptive"
 python .\balanced_tactic.py
 ~~~
 
 `ARENA_HERO_LLM_BASE_URL` 需要指向 OpenAI-compatible 的版本根路径（例如 `/v1`）；程序会请求其 `/chat/completions`。`ARENA_HERO_LLM_MODEL_VERBOSITY` 支持 `low`、`medium`、`high`；`ARENA_HERO_LLM_MODEL_REASONING_EFFORT` 支持 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`，但具体模型/供应商可能支持更窄的集合。两项都留空时不会把对应字段发送给供应商并保留旧的 `temperature=0`；设置任一项后会省略 `temperature`，避免新模型拒绝不兼容参数。评估模型和重设计模型可以是同一个模型，也可以分别指定。缺少 `ARENA_HERO_ADAPTIVE=1`、独立 LLM key 或任一模型名时，自适应功能安全关闭，原有战术行为不变。将 `ARENA_HERO_ADAPTIVE_AUTO_APPLY` 设为 `0` 可先观察报告而不自动采用候选 profile。
 
-运行态 `telemetry.jsonl`、周期报告和 `state.json` 默认位于 `.codex_tmp/adaptive/`，已被 `.gitignore` 排除。规则包优先从项目内 [skills/arena-hero](skills/arena-hero) 加载，每个周期重新读取并计算指纹；因此 clone 到另一台机器时不需要给 LLM 单独安装 skill。更新这个目录后，下一轮评估会自动使用新规则，旧规则的模型输出不会通过指纹校验。只有项目包不存在时才兼容用户目录里的旧安装；项目包存在但缺文件时本轮安全失败，不会跨目录拼接规则。
+运行态 `telemetry.jsonl`、周期报告和 `state.json` 默认位于仓库根目录的 `adaptive/`，已被 `.gitignore` 排除。这个目录按 `adaptive_strategy.py` 所在项目根解析，因此从其他工作目录启动也不会把状态写到错误位置；显式配置绝对路径仍然有效。规则包优先从项目内 [skills/arena-hero](skills/arena-hero) 加载，每个周期重新读取并计算指纹；因此 clone 到另一台机器时不需要给 LLM 单独安装 skill。更新这个目录后，下一轮评估会自动使用新规则，旧规则的模型输出不会通过指纹校验。只有项目包不存在时才兼容用户目录里的旧安装；项目包存在但缺文件时本轮安全失败，不会跨目录拼接规则。
 
 ## 观察、停止与手动操作
 

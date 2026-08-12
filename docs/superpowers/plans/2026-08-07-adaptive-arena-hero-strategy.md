@@ -16,7 +16,7 @@
 - Preserve the official `arena-hero>=0.2.9,<0.3` dependency and SDK connection/retry implementation.
 - Keep Beacon and economy floors: `beacon_priority >= 0.75`, `economy_priority >= 0.75`, and `worker_target >= 2`.
 - All new tests run without `ARENA_HERO_API_KEY`, `ARENA_HERO_LLM_API_KEY`, or a live Arena Hero connection.
-- Keep runtime state under `.codex_tmp/adaptive/`; never commit telemetry, prompts, or credentials.
+- Keep runtime state under the project-root `adaptive/`; never commit telemetry, prompts, or credentials.
 - Run the focused tests after each task and `python -m pytest -q`, `python -m compileall -q .`, `python -m pip check`, and `git diff --check` before completion.
 
 ---
@@ -426,7 +426,7 @@ git commit -m "feat: connect adaptive profile to deterministic planner"
 **Interfaces:**
 - Document opt-in adaptive mode, both model roles, the separate LLM key, the
   interval/rollback variables, profile state location, and shadow mode.
-- Keep all runtime telemetry under `.codex_tmp/adaptive/` and out of Git.
+- Keep all runtime telemetry under the project-root `adaptive/` and out of Git.
 
 - [ ] **Step 1: Write documentation assertions**
 
@@ -462,7 +462,7 @@ python .\balanced_tactic.py
 
 Explain that the evaluator and designer receive the current local v0.14 skill
 packet, only produce JSON, run outside the command window, and roll back on a
-normalized-score regression. Add `.codex_tmp/adaptive/` to `.gitignore`.
+normalized-score regression. Add `adaptive/` to `.gitignore`.
 
 - [ ] **Step 4: Run all release checks**
 

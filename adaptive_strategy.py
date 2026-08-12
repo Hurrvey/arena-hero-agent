@@ -54,7 +54,16 @@ _MODEL_REASONING_EFFORT_VALUES = frozenset(
 )
 _DOTENV_PREFIX = "ARENA_HERO_"
 _DOTENV_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
-_DEFAULT_DOTENV_PATH = Path(__file__).resolve().parent / ".env"
+_PROJECT_ROOT = Path(__file__).resolve().parent
+_DEFAULT_DOTENV_PATH = _PROJECT_ROOT / ".env"
+
+
+def _adaptive_state_dir(value: str | None) -> Path:
+    """Resolve adaptive state predictably from the repository root."""
+
+    configured = (value or "").strip()
+    path = Path(configured) if configured else Path("adaptive")
+    return path if path.is_absolute() else _PROJECT_ROOT / path
 
 
 def _decode_dotenv_quoted(value: str, quote: str) -> str:
@@ -1037,7 +1046,9 @@ class AdaptiveCoordinator:
             "1", "true", "yes", "on"
         }
         base_url = os.environ.get("ARENA_HERO_LLM_BASE_URL", "").strip() or "https://api.openai.com/v1"
-        state_dir = os.environ.get("ARENA_HERO_ADAPTIVE_STATE_DIR", "").strip() or ".codex_tmp/adaptive"
+        state_dir = _adaptive_state_dir(
+            os.environ.get("ARENA_HERO_ADAPTIVE_STATE_DIR")
+        )
         model_verbosity = _model_control_from_env(
             "ARENA_HERO_LLM_MODEL_VERBOSITY", _MODEL_VERBOSITY_VALUES
         )

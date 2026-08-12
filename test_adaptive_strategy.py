@@ -667,6 +667,42 @@ def test_env_factory_uses_separate_llm_credential_and_background_defaults(tmp_pa
     coordinator.close()
 
 
+def test_env_factory_defaults_to_project_adaptive_directory_from_any_cwd(
+    tmp_path, monkeypatch
+):
+    from adaptive_strategy import AdaptiveCoordinator, _PROJECT_ROOT
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ARENA_HERO_ADAPTIVE", "1")
+    monkeypatch.setenv("ARENA_HERO_LLM_API_KEY", "llm-only-secret")
+    monkeypatch.setenv("ARENA_HERO_EVALUATOR_MODEL", "critic")
+    monkeypatch.setenv("ARENA_HERO_DESIGNER_MODEL", "architect")
+    monkeypatch.delenv("ARENA_HERO_ADAPTIVE_STATE_DIR", raising=False)
+
+    coordinator = AdaptiveCoordinator.from_env(tmp_path / "missing.env")
+
+    assert coordinator.state_dir == _PROJECT_ROOT / "adaptive"
+    coordinator.close()
+
+
+def test_env_factory_resolves_relative_state_directory_from_project_root(
+    tmp_path, monkeypatch
+):
+    from adaptive_strategy import AdaptiveCoordinator, _PROJECT_ROOT
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ARENA_HERO_ADAPTIVE", "1")
+    monkeypatch.setenv("ARENA_HERO_LLM_API_KEY", "llm-only-secret")
+    monkeypatch.setenv("ARENA_HERO_EVALUATOR_MODEL", "critic")
+    monkeypatch.setenv("ARENA_HERO_DESIGNER_MODEL", "architect")
+    monkeypatch.setenv("ARENA_HERO_ADAPTIVE_STATE_DIR", "adaptive-relative")
+
+    coordinator = AdaptiveCoordinator.from_env(tmp_path / "missing.env")
+
+    assert coordinator.state_dir == _PROJECT_ROOT / "adaptive-relative"
+    coordinator.close()
+
+
 def test_openai_transport_rejects_malformed_choices_without_leaking_details(monkeypatch):
     from adaptive_strategy import LLMError, OpenAICompatibleTransport
 

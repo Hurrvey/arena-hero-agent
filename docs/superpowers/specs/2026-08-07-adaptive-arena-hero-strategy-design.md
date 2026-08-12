@@ -108,7 +108,8 @@ following environment variables control it:
 - `ARENA_HERO_ADAPTIVE_MIN_SECONDS` defaults to `900`;
 - `ARENA_HERO_ADAPTIVE_AUTO_APPLY` defaults to `1` after local validation;
 - `ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO` defaults to `0.15`;
-- `ARENA_HERO_ADAPTIVE_STATE_DIR` defaults to `.codex_tmp/adaptive`.
+- `ARENA_HERO_ADAPTIVE_STATE_DIR` defaults to the project-root `adaptive`
+  directory; relative overrides are also resolved from the project root.
 
 The LLM adapter uses the standard library HTTP client and an
 OpenAI-compatible `chat/completions` endpoint, so no provider-specific SDK or
@@ -135,4 +136,3 @@ profile bounds and Beacon/economy floors, prompt skill fingerprinting, JSON
 parsing, timeout/failure fallback, two-role sequencing, atomic profile
 activation, rollback, and the existing planner's default behavior. All tests
 run without an Arena Hero API key or a live game.
-
