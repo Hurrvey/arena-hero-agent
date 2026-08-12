@@ -7,7 +7,13 @@ def test_default_profile_preserves_beacon_and_economy_floor():
     profile = StrategyProfile.default()
     assert profile.beacon_priority >= 0.75
     assert profile.economy_priority >= 0.75
-    assert profile.worker_target >= 2
+    assert profile.worker_target == 23
+    assert profile.bootstrap_worker_target == 6
+    assert profile.near_beacon_radius == 12
+    assert profile.runner_stall_ticks == 6
+    assert profile.resource_memory_ttl == 64
+    assert profile.resource_stall_ticks == 6
+    assert profile.scout_ring_step == 10
 
 
 def test_profile_rejects_unknown_or_out_of_range_fields():
@@ -15,6 +21,24 @@ def test_profile_rejects_unknown_or_out_of_range_fields():
         StrategyProfile.from_mapping({"beacon_priority": 2.0})
     with pytest.raises(ValueError):
         StrategyProfile.from_mapping({"unexpected": 1})
+    with pytest.raises(ValueError):
+        StrategyProfile.from_mapping({"bootstrap_worker_target": 1})
+    with pytest.raises(ValueError):
+        StrategyProfile.from_mapping({"runner_stall_ticks": 99})
+
+
+def test_profile_round_trip_includes_bounded_dominance_parameters():
+    profile = StrategyProfile.default().with_updates(
+        worker_target=18,
+        bootstrap_worker_target=7,
+        near_beacon_radius=10,
+        runner_stall_ticks=5,
+        resource_memory_ttl=80,
+        resource_stall_ticks=7,
+        scout_ring_step=12,
+    )
+
+    assert StrategyProfile.from_mapping(profile.to_mapping()) == profile
 
 
 def test_profile_round_trips_as_json_safe_mapping():

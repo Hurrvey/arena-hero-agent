@@ -16,6 +16,7 @@ from balanced_tactic import (
     _queue_unit_heals,
     _kind,
     _choose_runner,
+    _desired_spawn_type,
     choose_actions,
     load_api_key,
     play,
@@ -891,10 +892,12 @@ def test_dynamic_price_is_used_after_population_twenty() -> None:
 
     choose_actions(turn)
 
-    assert core.actions == [("SPAWN", UnitType.RANGER)]
+    # At the first dynamic price band the staged economy already has its
+    # Worker goal but still lacks the first durable screen.
+    assert core.actions == [("SPAWN", UnitType.VANGUARD)]
 
 
-def test_unknown_beacon_dispatches_runner_without_speculative_pickup() -> None:
+def test_unknown_remote_beacon_does_not_lease_worker_before_bootstrap() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),
         position=(5, 5),
@@ -916,6 +919,101 @@ def test_unknown_beacon_dispatches_runner_without_speculative_pickup() -> None:
 
     assert worker.actions == [("MOVE", Direction.RIGHT)]
     assert all(action[0] != "PICKUP_BEACON" for action in worker.actions)
+    # The economic scout also moves right on its first slot, but it must not be
+    # permanently leased to a hidden/moving Beacon before six Workers exist.
+    memory = TacticMemory()
+    choose_actions(turn, memory)
+    assert memory.runner_id is None
+
+
+def test_runner_harvests_current_resource_before_resuming_beacon_route() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0),
+        hp=5,
+        shield=5,
+    )
+    workers = tuple(
+        FakeController(
+            object_id=UUID(int=index + 1),
+            position=(index, 0),
+            hp=2,
+            unit_type=UnitType.WORKER,
+        )
+        for index in range(6)
+    )
+    runner = workers[-1]
+    turn = make_turn(
+        core=core,
+        units=workers,
+        resources=0,
+        resource_cells={runner.position},
+        beacon=SimpleNamespace(position=(20, 0), status=None, carrier_id=None),
+    )
+    memory = TacticMemory(runner_id=runner.id)
+
+    choose_actions(turn, memory)
+
+    assert runner.actions == [("HARVEST",)]
+
+
+def test_near_visible_ground_beacon_allows_opportunistic_runner() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0), hp=5, shield=5,
+    )
+    worker = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000001"),
+        position=(1, 0), hp=2, unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        beacon=SimpleNamespace(position=(3, 0), status="GROUND", carrier_id=None),
+    )
+    memory = TacticMemory()
+
+    choose_actions(turn, memory)
+
+    assert memory.runner_id == worker.id
+    assert worker.actions == [("MOVE", Direction.RIGHT)]
+
+
+def test_staged_production_order_builds_economy_and_defense() -> None:
+    core = FakeController(
+        object_id=UUID("00000000-0000-0000-0000-000000000010"),
+        position=(0, 0), hp=5, shield=5,
+    )
+
+    def units(workers: int, vanguards: int, rangers: int):
+        result = []
+        index = 100
+        for count, unit_type, hp in (
+            (workers, UnitType.WORKER, 2),
+            (vanguards, UnitType.VANGUARD, 4),
+            (rangers, UnitType.RANGER, 2),
+        ):
+            for _ in range(count):
+                result.append(FakeController(
+                    object_id=UUID(int=index), position=(index, 100), hp=hp,
+                    unit_type=unit_type,
+                ))
+                index += 1
+        return tuple(result)
+
+    cases = (
+        ((5, 0, 0), UnitType.WORKER),
+        ((6, 0, 0), UnitType.VANGUARD),
+        ((6, 1, 0), UnitType.RANGER),
+        ((6, 1, 1), UnitType.WORKER),
+        ((12, 1, 1), UnitType.VANGUARD),
+        ((12, 3, 1), UnitType.RANGER),
+        ((12, 3, 4), UnitType.WORKER),
+    )
+    for composition, expected in cases:
+        fleet = units(*composition)
+        turn = make_turn(core=core, units=fleet, resources=100)
+        assert _desired_spawn_type(turn, memory=TacticMemory()) is expected
 
 
 def test_beacon_pickup_precedes_harvest_for_cargo_worker() -> None:
@@ -1100,7 +1198,9 @@ def test_beacon_drop_event_clears_carrier_memory() -> None:
     choose_actions(turn, memory)
 
     assert memory.carrier_id is None
-    assert carrier.actions == [("MOVE", Direction.RIGHT)]
+    # A hidden status is only a scouting hint; a combat Unit must not blindly
+    # chase the public coordinate after dropping Beacon.
+    assert carrier.actions == []
 
 
 def test_visible_enemy_beacon_carrier_is_highest_ranger_target() -> None:
@@ -1424,10 +1524,10 @@ def test_population_twenty_still_uses_dynamic_price_for_next_spawn() -> None:
 
     choose_actions(turn)
 
-    assert core.actions == [("SPAWN", UnitType.RANGER)]
+    assert core.actions == [("SPAWN", UnitType.VANGUARD)]
 
 
-def test_two_worker_economy_builds_capacity_bridge_before_ranger() -> None:
+def test_two_worker_economy_continues_bootstrap_before_defense() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),
         position=(0, 0),
@@ -1453,7 +1553,7 @@ def test_two_worker_economy_builds_capacity_bridge_before_ranger() -> None:
 
     choose_actions(turn)
 
-    assert core.actions == [("SPAWN", UnitType.VANGUARD)]
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
 
 
 def test_dynamic_price_fallback_avoids_capacity_deadlock_at_high_population() -> None:
@@ -1799,7 +1899,7 @@ def test_idle_combat_unit_vacates_core_for_affordable_spawn() -> None:
     assert core.actions == [("SPAWN", UnitType.WORKER)]
 
 
-def test_capacity_limited_deposit_is_not_double_counted_for_dynamic_spawn() -> None:
+def test_funded_bootstrap_spawn_vacates_worker_before_partial_deposit() -> None:
     core = FakeController(
         object_id=UUID("00000000-0000-0000-0000-000000000010"),
         position=(0, 0),
@@ -1829,10 +1929,10 @@ def test_capacity_limited_deposit_is_not_double_counted_for_dynamic_spawn() -> N
 
     choose_actions(turn)
 
-    # Capacity is 10, so only two of the five cargo resources can settle;
-    # 8 + 2 is below the Ranger price at population 2 (12).
-    assert cargo_worker.actions == [("DEPOSIT",)]
-    assert all(action[0] != "SPAWN" for action in core.actions)
+    # Current inventory already funds the 5-resource bootstrap Worker.  Moving
+    # preserves cargo and frees the only Unit slot for same-Tick production.
+    assert cargo_worker.actions and cargo_worker.actions[0][0] == "MOVE"
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
 
 
 def test_funded_spawn_vacates_cargo_worker_before_partial_deposit() -> None:
@@ -1871,7 +1971,7 @@ def test_funded_spawn_vacates_cargo_worker_before_partial_deposit() -> None:
     choose_actions(turn)
 
     assert cargo_worker.actions and cargo_worker.actions[0][0] == "MOVE"
-    assert core.actions == [("SPAWN", UnitType.RANGER)]
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
 
 
 def test_cargo_worker_vacates_for_a_price_lowered_by_remote_death() -> None:
@@ -1928,7 +2028,7 @@ def test_cargo_worker_vacates_for_a_price_lowered_by_remote_death() -> None:
     choose_actions(turn)
 
     assert cargo_worker.actions and cargo_worker.actions[0][0] == "MOVE"
-    assert core.actions == [("SPAWN", UnitType.VANGUARD)]
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
 
 
 def test_safe_worker_move_is_not_counted_as_a_dynamic_price_death() -> None:
@@ -2337,11 +2437,11 @@ def test_spawn_uses_post_combat_population_price_after_visible_death() -> None:
 
     choose_actions(turn)
 
-    assert core.actions == [("SPAWN", UnitType.VANGUARD)]
+    assert core.actions == [("SPAWN", UnitType.WORKER)]
 
 
-def test_cargo_deposit_is_not_suppressed_by_an_unplanned_safe_worker_retreat() -> None:
-    """Do not price a later Worker death before that Worker gets its MOVE."""
+def test_funded_bootstrap_spawn_survives_a_remote_worker_retreat() -> None:
+    """A safe remote retreat must not block already funded Worker growth."""
 
     core = FakeController(
         object_id=UUID(int=1000),
@@ -2400,10 +2500,9 @@ def test_cargo_deposit_is_not_suppressed_by_an_unplanned_safe_worker_retreat() -
 
     choose_actions(turn)
 
-    # At N=20 the current Ranger price is 16.  The threatened remote Worker
-    # safely retreats, so it must not make the earlier cargo Worker believe a
-    # cheaper N=19 replacement is already funded.  Deposit the resource now;
-    # the remaining Core-cell occupant correctly prevents SPAWN this Tick.
-    assert cargo_worker.actions == [("DEPOSIT",)]
+    # The mature policy still has fewer than six Workers.  Fifteen resources
+    # funds a Worker at N=20 without relying on the threatened Unit's death, so
+    # clear the Core slot and keep the cargo for a later deposit.
+    assert cargo_worker.actions and cargo_worker.actions[0][0] == "MOVE"
     assert retreating_worker.actions and retreating_worker.actions[0][0] == "MOVE"
-    assert core.actions == []
+    assert core.actions == [("SPAWN", UnitType.WORKER)]

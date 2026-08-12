@@ -11,6 +11,7 @@ from economic_strategy import (
     detect_two_cell_oscillation,
     refresh_economy_memory,
     scout_targets,
+    update_runner_lease,
 )
 
 
@@ -138,3 +139,33 @@ def test_stalled_resource_and_scout_targets_advance_after_threshold() -> None:
     assert worker_key not in memory.resource_intents
     assert memory.resource_cooldowns[(worker_key, (5, 0))] == 16
     assert memory.scout_stages[worker_key] == 1
+
+
+def test_runner_lease_releases_after_no_progress_and_starts_cooldown() -> None:
+    memory = EconomyMemory()
+    one = worker(1, (5, 0))
+    worker_key = one.id.bytes
+
+    assert update_runner_lease(
+        memory,
+        runner=one,
+        target=(10, 0),
+        tick=1,
+        stall_limit=2,
+    )
+    assert update_runner_lease(
+        memory,
+        runner=one,
+        target=(10, 0),
+        tick=2,
+        stall_limit=2,
+    )
+    assert not update_runner_lease(
+        memory,
+        runner=one,
+        target=(10, 0),
+        tick=3,
+        stall_limit=2,
+    )
+    assert memory.runner_lease is None
+    assert memory.runner_cooldowns[worker_key] > 3

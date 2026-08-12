@@ -80,6 +80,14 @@ class ScoutProgress:
 
 
 @dataclass(slots=True)
+class RunnerLease:
+    unit_id: bytes
+    target: Position
+    best_distance: int
+    stalled_turns: int = 0
+
+
+@dataclass(slots=True)
 class EconomyMemory:
     resource_last_seen: dict[Position, int] = field(default_factory=dict)
     resource_intents: dict[bytes, Position] = field(default_factory=dict)
@@ -90,6 +98,8 @@ class EconomyMemory:
     scout_progress: dict[bytes, ScoutProgress] = field(default_factory=dict)
     worker_history: dict[bytes, deque[Position]] = field(default_factory=dict)
     chunk_last_seen: dict[Position, int] = field(default_factory=dict)
+    runner_lease: RunnerLease | None = None
+    runner_cooldowns: dict[bytes, int] = field(default_factory=dict)
 
 
 def detect_two_cell_oscillation(positions: Iterable[Position]) -> bool:
@@ -139,6 +149,11 @@ def refresh_economy_memory(
         worker_key, target = key
         if worker_key not in living or retry_tick <= tick or target not in memory.resource_last_seen:
             memory.resource_cooldowns.pop(key, None)
+    for worker_key, retry_tick in tuple(memory.runner_cooldowns.items()):
+        if worker_key not in living or retry_tick <= tick:
+            memory.runner_cooldowns.pop(worker_key, None)
+    if memory.runner_lease is not None and memory.runner_lease.unit_id not in living:
+        memory.runner_lease = None
     for worker_key, target in tuple(memory.resource_intents.items()):
         if target not in memory.resource_last_seen:
             memory.resource_intents.pop(worker_key, None)
@@ -349,6 +364,37 @@ def record_worker_progress(
         history.append(position)
     memory.chunk_last_seen[_chunk(position)] = tick
     return detect_two_cell_oscillation(history)
+
+
+def update_runner_lease(
+    memory: EconomyMemory,
+    *,
+    runner: object,
+    target: Position,
+    tick: int,
+    stall_limit: int,
+) -> bool:
+    """Refresh one progress lease, releasing a stuck or oscillating runner."""
+
+    if type(stall_limit) is not int or stall_limit < 1:
+        raise ValueError("stall_limit must be a positive integer")
+    worker_key = _uuid_key(runner.id)
+    distance = _distance(tuple(runner.position), target)
+    lease = memory.runner_lease
+    if lease is None or lease.unit_id != worker_key or lease.target != target:
+        memory.runner_lease = RunnerLease(worker_key, target, distance)
+        return True
+    if distance < lease.best_distance:
+        lease.best_distance = distance
+        lease.stalled_turns = 0
+        return True
+    lease.stalled_turns += 1
+    oscillating = detect_two_cell_oscillation(memory.worker_history.get(worker_key, ()))
+    if not oscillating and lease.stalled_turns < stall_limit:
+        return True
+    memory.runner_lease = None
+    memory.runner_cooldowns[worker_key] = tick + stall_limit
+    return False
 
 
 def advance_stalled_targets(

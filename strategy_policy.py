@@ -17,7 +17,15 @@ PROFILE_BOUNDS = {
 }
 
 PROFILE_INT_BOUNDS = {
-    "worker_target": (2, 3),
+    # Keep older persisted profiles loadable while defaulting new deployments
+    # to the mature 23-Worker economy.
+    "worker_target": (2, 23),
+    "bootstrap_worker_target": (4, 8),
+    "near_beacon_radius": (4, 24),
+    "runner_stall_ticks": (3, 12),
+    "resource_memory_ttl": (32, 128),
+    "resource_stall_ticks": (3, 12),
+    "scout_ring_step": (6, 20),
     "carrier_safety_margin": (0, 1),
 }
 
@@ -26,7 +34,13 @@ _DEFAULTS = {
     "beacon_priority": 1.0,
     "economy_priority": 1.0,
     "combat_priority": 0.75,
-    "worker_target": 2,
+    "worker_target": 23,
+    "bootstrap_worker_target": 6,
+    "near_beacon_radius": 12,
+    "runner_stall_ticks": 6,
+    "resource_memory_ttl": 64,
+    "resource_stall_ticks": 6,
+    "scout_ring_step": 10,
     "ranger_ratio": 2.0,
     "carrier_safety_margin": 0,
     "spawn_aggression": 0.5,
@@ -39,7 +53,13 @@ class StrategyProfile:
     beacon_priority: float = 1.0
     economy_priority: float = 1.0
     combat_priority: float = 0.75
-    worker_target: int = 2
+    worker_target: int = 23
+    bootstrap_worker_target: int = 6
+    near_beacon_radius: int = 12
+    runner_stall_ticks: int = 6
+    resource_memory_ttl: int = 64
+    resource_stall_ticks: int = 6
+    scout_ring_step: int = 10
     ranger_ratio: float = 2.0
     carrier_safety_margin: int = 0
     spawn_aggression: float = 0.5
@@ -73,6 +93,12 @@ class StrategyProfile:
             "economy_priority": self.economy_priority,
             "combat_priority": self.combat_priority,
             "worker_target": self.worker_target,
+            "bootstrap_worker_target": self.bootstrap_worker_target,
+            "near_beacon_radius": self.near_beacon_radius,
+            "runner_stall_ticks": self.runner_stall_ticks,
+            "resource_memory_ttl": self.resource_memory_ttl,
+            "resource_stall_ticks": self.resource_stall_ticks,
+            "scout_ring_step": self.scout_ring_step,
             "ranger_ratio": self.ranger_ratio,
             "carrier_safety_margin": self.carrier_safety_margin,
             "spawn_aggression": self.spawn_aggression,

@@ -33,6 +33,7 @@ from economic_strategy import (
     assign_resource_targets,
     refresh_economy_memory,
     scout_targets,
+    update_runner_lease,
 )
 from strategy_policy import StrategyProfile
 
@@ -761,16 +762,52 @@ def _should_vacate_core_for_spawn(
 
 
 def _choose_runner(turn, memory: TacticMemory):
+    profile = getattr(memory, "policy", StrategyProfile.default())
+    beacon = getattr(turn, "beacon", None)
+    beacon_position = getattr(beacon, "position", None)
+    status = _enum_name(getattr(beacon, "status", None))
+    bootstrap = int(getattr(profile, "bootstrap_worker_target", 6))
+    economic_ready = len(getattr(turn, "workers", ())) >= bootstrap
+    near_radius = int(getattr(profile, "near_beacon_radius", 12))
+    enemy_carrier = _visible_enemy_carrier(turn)
+
+    # A fogged Beacon coordinate is a useful scouting direction but not proof
+    # that a Worker can pick it up.  Never create or retain a permanent runner
+    # from hidden status; economy/scouting will still spread toward new chunks.
+    if beacon_position is None or status not in {"GROUND", "CARRIED"}:
+        memory.runner_id = None
+        memory.economy.runner_lease = None
+        return None
+    # Visible enemy carriers are combat interception targets.  Spending a
+    # Worker action tailing them starves the economy and cannot pick up Beacon.
+    if status == "CARRIED" and enemy_carrier is not None:
+        memory.runner_id = None
+        memory.economy.runner_lease = None
+        return None
+
     if memory.runner_id is not None:
         runner = _controlled_object(turn, memory.runner_id)
         planned_carrier = _owned_beacon_carrier(turn, memory)
         if runner is not None and (
             planned_carrier is None or not _same_id(runner.id, planned_carrier.id)
         ):
-            return runner
+            runner_near = _distance(runner.position, beacon_position) <= near_radius
+            cargo = int(getattr(runner, "cargo", 0) or 0)
+            if (
+                cargo == 0
+                and (economic_ready or (status == "GROUND" and runner_near))
+                and update_runner_lease(
+                    memory.economy,
+                    runner=runner,
+                    target=beacon_position,
+                    tick=int(getattr(turn, "tick", 0)),
+                    stall_limit=int(getattr(profile, "runner_stall_ticks", 6)),
+                )
+            ):
+                return runner
+        memory.runner_id = None
 
-    beacon_position = getattr(getattr(turn, "beacon", None), "position", None)
-    if beacon_position is None:
+    if status != "GROUND":
         return None
     # Cargo must reach the stationary Core before it can become useful.  Never
     # turn a loaded Worker into a remote Beacon runner and strand its economy.
@@ -780,6 +817,16 @@ def _choose_runner(turn, memory: TacticMemory):
         if not (
             _enum_name(getattr(unit, "unit_type", None)) == "WORKER"
             and int(getattr(unit, "cargo", 0) or 0) > 0
+        )
+    ]
+    candidates = [
+        unit
+        for unit in candidates
+        if memory.economy.runner_cooldowns.get(_uuid_key(unit.id), 0)
+        <= int(getattr(turn, "tick", 0))
+        and (
+            economic_ready
+            or _distance(unit.position, beacon_position) <= near_radius
         )
     ]
     if not candidates:
@@ -839,6 +886,13 @@ def _choose_runner(turn, memory: TacticMemory):
         )
     )
     memory.runner_id = candidates[0].id
+    update_runner_lease(
+        memory.economy,
+        runner=candidates[0],
+        target=beacon_position,
+        tick=int(getattr(turn, "tick", 0)),
+        stall_limit=int(getattr(profile, "runner_stall_ticks", 6)),
+    )
     return candidates[0]
 
 
@@ -1946,6 +2000,12 @@ def _queue_worker_actions(
             continue
 
         if is_runner and _owned_beacon_carrier(turn, memory) is None:
+            if not worker.cargo and worker.position in turn.resource_cells:
+                if worker.position not in claimed_resources:
+                    worker.harvest()
+                    claimed_resources.add(worker.position)
+                    acted.add(worker.id)
+                    continue
             _queue_runner_action(
                 turn,
                 worker,
@@ -2320,15 +2380,22 @@ def _desired_spawn_type(
     capacity = core_resource_capacity(population)
 
     profile = getattr(memory, "policy", StrategyProfile.default())
-    if workers < profile.worker_target:
+    bootstrap_target = min(profile.worker_target, profile.bootstrap_worker_target)
+    mature_worker_target = min(profile.worker_target, 12)
+    if workers < bootstrap_target:
         priority = [UnitType.WORKER, UnitType.VANGUARD, UnitType.RANGER]
-    elif rangers == 0:
-        # At population two the minimum capacity is 10, while the first
-        # Ranger costs 12.  The affordable Vanguard is the capacity bridge;
-        # once population reaches three, capacity is 15 and Ranger wins.
-        priority = [UnitType.RANGER, UnitType.VANGUARD, UnitType.WORKER]
-    elif vanguards == 0:
+    elif vanguards < 1:
         priority = [UnitType.VANGUARD, UnitType.RANGER, UnitType.WORKER]
+    elif rangers < 1:
+        priority = [UnitType.RANGER, UnitType.VANGUARD, UnitType.WORKER]
+    elif workers < mature_worker_target:
+        priority = [UnitType.WORKER, UnitType.VANGUARD, UnitType.RANGER]
+    elif vanguards < 3:
+        priority = [UnitType.VANGUARD, UnitType.RANGER, UnitType.WORKER]
+    elif rangers < 4:
+        priority = [UnitType.RANGER, UnitType.VANGUARD, UnitType.WORKER]
+    elif workers < profile.worker_target:
+        priority = [UnitType.WORKER, UnitType.VANGUARD, UnitType.RANGER]
     elif rangers <= profile.ranger_ratio * max(1, vanguards):
         priority = [UnitType.RANGER, UnitType.VANGUARD, UnitType.WORKER]
     else:
@@ -2528,17 +2595,20 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     # A Worker runner must physically travel toward the public coordinate; a
     # combat runner is handled by the combat movement code below.
     if runner is not None and _enum_name(getattr(runner, "unit_type", None)) == "WORKER":
-        _queue_runner_action(
-            turn,
-            runner,
-            memory,
-            acted,
-            occupied,
-            reserved_destinations,
-            planned_from_core,
-            planned_into_core,
-            planned_moves,
-        )
+        # Economy actions outrank travel: a runner on a visible node harvests
+        # now, and a loaded legacy runner is released by _choose_runner.
+        if not runner.cargo and runner.position not in turn.resource_cells:
+            _queue_runner_action(
+                turn,
+                runner,
+                memory,
+                acted,
+                occupied,
+                reserved_destinations,
+                planned_from_core,
+                planned_into_core,
+                planned_moves,
+            )
 
     _queue_ranger_actions(
         turn,
