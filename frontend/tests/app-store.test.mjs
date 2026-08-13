@@ -56,3 +56,28 @@ test("empty authoritative state can initialize before the first Turn", () => {
   assert.equal(store.snapshot.plan, null);
   assert.equal(store.snapshot.connection.needsReplay, false);
 });
+
+test("SDK object snapshot is normalized for the dashboard", () => {
+  const store = new AppStore();
+  store.replaceFromRest({
+    tick: 100_217,
+    resources: 3,
+    population: 9,
+    championBeacon: { position: [-1130, -300], status: "GROUND" },
+    objects: [
+      { kind: "CORE", id: "E1", controlled: true, position: [-1139, -296], hp: 5, shield: 5 },
+      { kind: "UNIT", id: "E2", controlled: true, unitType: "WORKER", position: [-1138, -296], hp: 2 },
+      { kind: "UNIT", id: "E9", controlled: false, unitType: "RANGER", position: [-1135, -296], hp: 2 },
+      { kind: "OBSTACLE", positions: [[-1140, -300]] },
+      { kind: "RESOURCE", positions: [[-1136, -298]] },
+    ],
+  }, null, 0);
+
+  assert.equal(store.snapshot.state.core.id, "E1");
+  assert.equal(store.snapshot.state.units[0].id, "E2");
+  assert.equal(store.snapshot.state.visibleEnemies[0].id, "E9");
+  assert.deepEqual(store.snapshot.state.obstacleCells, [[-1140, -300]]);
+  assert.deepEqual(store.snapshot.state.resourceCells, [[-1136, -298]]);
+  assert.equal(store.snapshot.state.resourceCapacity, 45);
+  assert.equal(store.snapshot.state.beacon.status, "GROUND");
+});

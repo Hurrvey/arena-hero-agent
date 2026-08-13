@@ -22,6 +22,7 @@ from .serialization import (
     serialize_public_explanation,
     serialize_public_plan,
     serialize_resolution_events,
+    serialize_resolution_service_payload,
     serialize_turn,
 )
 
@@ -130,12 +131,7 @@ class RuntimeServicesFactory:
             (
                 (
                     "resolution.results",
-                    {
-                        "count": len(resolution_events),
-                        "planTicks": sorted(
-                            {int(event["plan_tick"]) for event in resolution_events}
-                        ),
-                    },
+                    serialize_resolution_service_payload(resolution_events),
                 ),
             )
             if resolution_events

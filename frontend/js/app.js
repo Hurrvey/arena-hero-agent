@@ -11,6 +11,7 @@ import { installStrategy, renderStrategy } from "./views/strategy.js";
 import { installAdaptive, renderAdaptive } from "./views/adaptive.js";
 import { installHistory, renderHistory } from "./views/history.js";
 import { renderSettings } from "./views/settings.js";
+import { decorateStateWithPlan } from "./map/plan-routes.js";
 
 const store = new AppStore(); const api = new ApiClient(); let tacticalMap = null; let liveConnection = null; let activeRoute = currentRoute(); let routeNonce = 0;
 const main = document.querySelector("#route-view"); const header = document.querySelector("#runtime-strip"); const banner = document.querySelector("#connection-banner");
@@ -35,7 +36,7 @@ function render(route = activeRoute) {
   tacticalMap?.dispose();
   tacticalMap = null;
   activeRoute = route; document.querySelectorAll(".nav-link").forEach((link) => link.classList.toggle("active", link.getAttribute("href") === route));
-  if (route === "/") renderOverview(main, store.snapshot);
+  if (route === "/") renderOverview(main, overviewSnapshot());
   else renderSecondary(route);
   renderChrome();
   if (route === "/") installOverview();
@@ -68,11 +69,19 @@ async function renderSecondary(route) {
 }
 
 function installOverview() {
+  const presented = overviewSnapshot();
   const canvas = document.querySelector("#tactical-map");
   tacticalMap = new TacticalMap(canvas, document.querySelector("#map-description"), (entity) => { const detail = document.querySelector("#entity-detail"); detail.innerHTML = renderEntityDetail(entity); detail.hidden = false; });
-  tacticalMap.update(store.snapshot.state);
-  document.querySelectorAll("[data-map]").forEach((button) => button.addEventListener("click", () => { const action = button.dataset.map; if (action === "home") { tacticalMap.hasAnchor = false; tacticalMap.update(store.snapshot.state); } else { tacticalMap.camera.zoomBy(action === "in" ? .2 : -.2); tacticalMap.render(); } }));
+  tacticalMap.update(presented.state);
+  document.querySelectorAll("[data-map]").forEach((button) => button.addEventListener("click", () => { const action = button.dataset.map; if (action === "home") { tacticalMap.hasAnchor = false; tacticalMap.update(presented.state); } else { tacticalMap.camera.zoomBy(action === "in" ? .2 : -.2); tacticalMap.render(); } }));
   document.querySelectorAll("[data-filter]").forEach((tab) => tab.addEventListener("click", () => { document.querySelectorAll("[data-filter]").forEach((item) => item.classList.toggle("active", item === tab)); document.querySelector("#unit-table").innerHTML = renderUnitTable(store.snapshot.state, tab.dataset.filter); }));
+}
+
+function overviewSnapshot() {
+  return {
+    ...store.snapshot,
+    state: decorateStateWithPlan(store.snapshot.state, store.snapshot.plan),
+  };
 }
 
 function updateControls() {

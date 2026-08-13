@@ -90,6 +90,12 @@ def test_result_contains_public_action_reason_and_risk_delta() -> None:
     assert action.risk_after == 0
 
 
+def test_defense_diagnostic_uses_named_threat_level() -> None:
+    result = plan_turn(fake_turn(), TacticMemory(), StrategyProfile.default())
+
+    assert result.diagnostics.defense["level"] == "CLEAR"
+
+
 def test_validation_failure_degrades_one_entity_to_wait_without_second_submit() -> None:
     entity_id = UUID(int=1)
     result = SimpleNamespace(

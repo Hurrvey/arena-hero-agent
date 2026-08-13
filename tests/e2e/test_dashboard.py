@@ -24,6 +24,10 @@ def install_api_mocks(page: Page) -> None:
     plan = {
         "tick": 1234,
         "status": "ACCEPTED",
+        "plan": {
+            "tick": 1234,
+            "unitActions": {"R1": {"type": "SHOOT", "expectedCell": [20, 6]}},
+        },
         "explanation": {
             "actions": [
                 {
@@ -84,6 +88,7 @@ def test_dashboard_renders_runtime_metrics_plan_events_and_units(
     expect(page.get_by_text("APPROACH")).to_be_visible()
     expect(page.get_by_text("ACCEPTED", exact=True).first).to_be_visible()
     expect(page.get_by_text("R1", exact=True).first).to_be_visible()
+    expect(page.locator('tr[data-entity-id="R1"]')).to_contain_text("SHOOT")
     expect(page.locator("#tactical-map")).to_be_visible()
 
 

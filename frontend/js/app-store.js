@@ -58,6 +58,7 @@ export class AppStore {
 
   replaceFromRest(state, plan, lastSeq, events = []) {
     const safeState = state ? structuredClone(state) : null;
+    normalizeDashboardState(safeState);
     if (safeState?.beacon && safeState.beacon.status == null) {
       delete safeState.beacon.carrierId;
       delete safeState.beacon.carrier_id;
@@ -76,4 +77,22 @@ export class AppStore {
   select(selection) {
     this.patch("selection", selection);
   }
+}
+
+function normalizeDashboardState(state) {
+  if (!state || !Array.isArray(state.objects)) return;
+  const controlled = state.objects.filter((item) => item?.controlled === true);
+  state.core ??= controlled.find((item) => String(item.kind).toUpperCase() === "CORE") || null;
+  state.units ??= controlled.filter((item) => String(item.kind).toUpperCase() === "UNIT");
+  state.visibleEnemies ??= state.objects.filter((item) => item?.controlled === false && ["CORE", "UNIT"].includes(String(item.kind).toUpperCase()));
+  state.obstacleCells ??= terrainPositions(state.objects, "OBSTACLE");
+  state.resourceCells ??= terrainPositions(state.objects, "RESOURCE");
+  state.resourceCapacity ??= Math.max(10, Number(state.population || state.units.length) * 5);
+  state.beacon ??= state.championBeacon || null;
+}
+
+function terrainPositions(objects, kind) {
+  return objects
+    .filter((item) => String(item?.kind).toUpperCase() === kind)
+    .flatMap((item) => Array.isArray(item.positions) ? item.positions : []);
 }

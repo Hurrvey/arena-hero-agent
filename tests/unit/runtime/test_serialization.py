@@ -6,8 +6,115 @@ from app.runtime.serialization import (
     serialize_public_explanation,
     serialize_public_plan,
     serialize_resolution_events,
+    serialize_resolution_service_payload,
+    serialize_turn,
 )
 from app.strategy.planner import DecisionAction, DecisionExplanation
+
+
+def test_turn_projects_sdk_objects_into_dashboard_state() -> None:
+    private_core = uuid4()
+    private_worker = uuid4()
+    private_enemy = uuid4()
+    turn = SimpleNamespace(
+        tick=100_217,
+        state={
+            "status": "ACTIVE",
+            "resources": 3,
+            "population": 9,
+            "champion_beacon": {
+                "position": (-1_130, -300),
+                "status": "GROUND",
+                "carrier_id": None,
+            },
+            "objects": [
+                {
+                    "kind": "OBSTACLE",
+                    "positions": [(-1_140, -300), (-1_139, -300)],
+                },
+                {"kind": "RESOURCE", "positions": [(-1_136, -298)]},
+                {
+                    "kind": "CORE",
+                    "id": private_core,
+                    "controlled": True,
+                    "position": (-1_139, -296),
+                    "hp": 5,
+                    "shield": 5,
+                    "state": "NORMAL",
+                },
+                {
+                    "kind": "UNIT",
+                    "id": private_worker,
+                    "controlled": True,
+                    "position": (-1_138, -296),
+                    "hp": 2,
+                    "unit_type": "WORKER",
+                    "cargo": 1,
+                },
+                {
+                    "kind": "UNIT",
+                    "id": private_enemy,
+                    "controlled": False,
+                    "position": (-1_135, -296),
+                    "hp": 4,
+                    "unit_type": "VANGUARD",
+                },
+            ],
+            "events": [],
+        },
+    )
+
+    raw, public = serialize_turn(turn, PublicIdMapper("session"))
+
+    assert raw["tick"] == 100_217
+    assert public["tick"] == 100_217
+    assert public["resourceCapacity"] == 45
+    assert public["core"] == {
+        "kind": "CORE",
+        "id": "E1",
+        "controlled": True,
+        "position": [-1_139, -296],
+        "hp": 5,
+        "shield": 5,
+        "state": "NORMAL",
+    }
+    assert public["units"][0]["id"] == "E2"
+    assert public["visibleEnemies"][0]["id"] == "E3"
+    assert public["visibleEnemies"][0]["unitType"] == "VANGUARD"
+    assert public["obstacleCells"] == [[-1_140, -300], [-1_139, -300]]
+    assert public["resourceCells"] == [[-1_136, -298]]
+    assert public["beacon"] == {
+        "position": [-1_130, -300],
+        "status": "GROUND",
+        "carrierId": None,
+    }
+    assert str(private_core) not in str(public)
+    assert str(private_worker) not in str(public)
+    assert str(private_enemy) not in str(public)
+
+
+def test_public_turn_does_not_duplicate_raw_resolution_events_or_usernames() -> None:
+    turn = SimpleNamespace(
+        tick=5,
+        state={
+            "status": "ACTIVE",
+            "resources": 0,
+            "population": 0,
+            "objects": [],
+            "events": [
+                {
+                    "event_id": uuid4(),
+                    "event_type": "CORE_DESTROYED",
+                    "values": {"destroyed_by": ["private-player"]},
+                }
+            ],
+        },
+    )
+
+    _, public = serialize_turn(turn, PublicIdMapper("session"))
+
+    assert "events" not in public
+    assert "private-player" not in str(public)
 
 
 def test_resolution_events_are_public_redacted_and_bound_to_previous_plan() -> None:
@@ -59,6 +166,63 @@ def test_resolution_event_tick_is_authoritative_for_plan_binding() -> None:
 
     assert event["plan_tick"] == 12
     assert event["observed_tick"] == 15
+
+
+def test_resolution_event_keeps_both_public_actor_and_target() -> None:
+    actor = uuid4()
+    target = uuid4()
+    turn = SimpleNamespace(
+        tick=15,
+        events=(
+            SimpleNamespace(
+                event_type="SHOT_HIT",
+                actor_id=actor,
+                target_id=target,
+                position=(1, 2),
+                values={"damage": 1},
+            ),
+        ),
+    )
+
+    event = serialize_resolution_events(turn, PublicIdMapper("session"))[0]
+
+    assert event["actor_id"] == "E1"
+    assert event["target_id"] == "E2"
+    assert event["short_id"] == "E1"
+
+
+def test_resolution_service_payload_exposes_individual_public_results() -> None:
+    events = (
+        {
+            "plan_tick": 12,
+            "observed_tick": 13,
+            "event_type": "SHOT_HIT",
+            "actor_id": "E2",
+            "target_id": "E9",
+            "short_id": "E2",
+            "position": [4, 5],
+            "values": {"damage": 1},
+        },
+    )
+
+    payload = serialize_resolution_service_payload(events)
+
+    assert payload == {
+        "count": 1,
+        "planTicks": [12],
+        "events": [
+            {
+                "planTick": 12,
+                "observedTick": 13,
+                "eventType": "SHOT_HIT",
+                "actorId": "E2",
+                "targetId": "E9",
+                "shortId": "E2",
+                "position": [4, 5],
+                "values": {"damage": 1},
+            }
+        ],
+    }
 
 
 def test_resolution_values_remove_destroyed_by_usernames() -> None:

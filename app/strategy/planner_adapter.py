@@ -134,7 +134,7 @@ def plan_turn(turn: object, memory: object, profile: object) -> PlannerResult:
         economy=MappingProxyType(dict(getattr(memory, "economy_diagnostics", {}))),
         defense=MappingProxyType(
             {
-                "level": str(getattr(getattr(memory, "defense", None), "level", "CLEAR")),
+                "level": _enum_name(getattr(getattr(memory, "defense", None), "level", "CLEAR")),
                 "incoming_damage": int(
                     getattr(getattr(memory, "defense", None), "incoming_damage", 0)
                 ),
@@ -147,6 +147,14 @@ def plan_turn(turn: object, memory: object, profile: object) -> PlannerResult:
         explanation=_build_explanation(turn, plan),
         diagnostics=diagnostics,
     )
+
+
+def _enum_name(value: object) -> str:
+    name = getattr(value, "name", None)
+    if name is not None:
+        return str(name).upper()
+    raw = getattr(value, "value", value)
+    return str(raw).upper().rsplit(".", 1)[-1]
 
 
 def apply_planner_result(
