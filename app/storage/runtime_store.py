@@ -52,6 +52,34 @@ class RuntimeStore:
             )
             connection.commit()
 
+    def append_service_event(
+        self,
+        *,
+        session_id: str,
+        tick: int | None,
+        event_type: str,
+        payload: Mapping[str, object],
+    ) -> ServiceEvent:
+        created_at = utc_now()
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO service_events(
+                    session_id, tick, event_type, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (session_id, tick, event_type, _json(payload), created_at),
+            )
+            connection.commit()
+        return ServiceEvent(
+            int(cursor.lastrowid),
+            session_id,
+            tick,
+            event_type,
+            dict(payload),
+            created_at,
+        )
+
     def save_turn_batch(
         self,
         *,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from threading import Event, RLock, Thread, current_thread
 from uuid import uuid4
 
@@ -12,6 +13,8 @@ from .client import GameClientFactory
 from .event_queue import RuntimeEventQueue
 from .models import RuntimeBatch, RuntimeConflict, RuntimeSnapshot, RuntimeStatus
 from .serialization import is_receipt, is_turn, receipt_batch
+
+logger = logging.getLogger(__name__)
 
 
 class AgentRuntime:
@@ -188,4 +191,7 @@ class AgentRuntime:
         batch = RuntimeBatch("TURN_SUBMITTED", tick, turn, result, receipt, "AGENT")
         self._queue.put_critical(batch)
         self._persistence(batch)
-        self._adaptive_observer(turn, receipt, result)
+        try:
+            self._adaptive_observer(turn, receipt, result)
+        except Exception:  # noqa: BLE001 - post-submit adaptive work is fail-open
+            logger.warning("adaptive observation failed after accepted plan")
