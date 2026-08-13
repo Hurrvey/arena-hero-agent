@@ -157,6 +157,7 @@ def internal_score(metrics: Mapping[str, float]) -> float:
         "units_lost": -4.0,
         "core_losses": -100.0,
         "failed_actions": -0.5,
+        "overflow_destroyed": -2.0,
         # Economic dead time is deliberately visible to the adaptive layer.
         # These weights are strong enough to reject a live-lock without
         # overpowering real Beacon, resource, or combat results.

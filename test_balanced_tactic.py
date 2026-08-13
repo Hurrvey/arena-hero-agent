@@ -3166,3 +3166,50 @@ def test_funded_bootstrap_spawn_survives_a_remote_worker_retreat() -> None:
     assert cargo_worker.actions and cargo_worker.actions[0][0] == "MOVE"
     assert retreating_worker.actions and retreating_worker.actions[0][0] == "MOVE"
     assert core.actions == [("SPAWN", UnitType.WORKER)]
+
+
+def test_deposit_is_deferred_when_visible_death_would_destroy_overflow() -> None:
+    core = FakeController(
+        object_id=UUID(int=100),
+        position=(0, 0),
+        hp=5,
+        shield=5,
+    )
+    depositor = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+        cargo=5,
+    )
+    doomed = FakeController(
+        object_id=UUID(int=2),
+        position=(3, 0),
+        hp=1,
+        unit_type=UnitType.WORKER,
+    )
+    safe = FakeController(
+        object_id=UUID(int=3),
+        position=(8, 8),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    enemy = SimpleNamespace(
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        id=UUID(int=200),
+        position=(3, 3),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(depositor, doomed, safe),
+        resources=10,
+        enemies=(enemy,),
+        obstacle_cells={(4, 0), (3, -1), (2, 0)},
+        beacon=SimpleNamespace(position=(100, 100), status=None, carrier_id=None),
+    )
+
+    choose_actions(turn)
+
+    assert ("DEPOSIT",) not in depositor.actions

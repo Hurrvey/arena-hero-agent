@@ -32,6 +32,7 @@ from economic_strategy import (
     advance_stalled_targets,
     assign_resource_targets,
     detect_two_cell_oscillation,
+    invalidate_resource_targets,
     refresh_economy_memory,
     scout_targets,
     update_runner_lease,
@@ -44,6 +45,10 @@ from defense_strategy import (
     select_defenders,
 )
 from strategy_policy import StrategyProfile
+from app.strategy.models import EntityKind, EntitySnapshot
+from app.strategy.projection import compute_capacity_projection, should_defer_deposit
+from app.strategy.risk import build_visible_risk_map
+from app.strategy.visibility import compute_visible_cells
 
 
 DIRECTIONS = (Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT)
@@ -610,6 +615,52 @@ def _visible_attack_count(cell, enemies, obstacles) -> int:
         ):
             count += 1
     return count
+
+
+def _unit_snapshot(unit, *, controlled: bool) -> EntitySnapshot | None:
+    unit_type = _enum_name(getattr(unit, "unit_type", None))
+    if unit_type not in {"WORKER", "VANGUARD", "RANGER"}:
+        return None
+    return EntitySnapshot(
+        _uuid_key(unit.id),
+        EntityKind(unit_type),
+        tuple(unit.position),
+        max(0, int(unit.hp)),
+        controlled=controlled,
+    )
+
+
+def _deposit_would_overflow_after_combat(
+    turn,
+    memory: TacticMemory,
+    planned_moves: dict[bytes, tuple[int, int]],
+    *,
+    pending_deposit: int,
+    next_amount: int,
+) -> bool:
+    """Return whether a same-Tick deposit is visibly destroyed by cap shrink."""
+
+    if next_amount <= 0:
+        return False
+    units = tuple(
+        snapshot
+        for unit in getattr(turn, "units", ())
+        if (snapshot := _unit_snapshot(unit, controlled=True)) is not None
+    )
+    enemies = tuple(
+        snapshot
+        for enemy in getattr(turn, "visible_enemies", ())
+        if (snapshot := _unit_snapshot(enemy, controlled=False)) is not None
+    )
+    risk_map = build_visible_risk_map((), enemies, _obstacles_for(turn, memory))
+    projection = compute_capacity_projection(
+        units,
+        risk_map=risk_map,
+        planned_destinations=planned_moves,
+        current_resources=max(0, int(getattr(turn, "resources", 0))) + pending_deposit,
+        pending_deposit=next_amount,
+    )
+    return should_defer_deposit(projection)
 
 
 def _carrier_destination_is_safe(
@@ -2284,11 +2335,18 @@ def _queue_worker_actions(
                 and worker.position == core_position
                 and pending_space > 0
             ):
-                worker.deposit()
-                acted.add(worker.id)
                 deposited = min(int(worker.cargo or 0), pending_space)
-                pending_deposit += deposited
-                pending_space -= deposited
+                if not _deposit_would_overflow_after_combat(
+                    turn,
+                    memory,
+                    planned_moves,
+                    pending_deposit=pending_deposit,
+                    next_amount=deposited,
+                ):
+                    worker.deposit()
+                    acted.add(worker.id)
+                    pending_deposit += deposited
+                    pending_space -= deposited
             # If every flank is blocked or visibly threatened, WAIT instead
             # of leading an empty Worker onto the attacked Core cell. A loaded
             # Worker on the Core still deposits before combat when it cannot
@@ -2336,12 +2394,19 @@ def _queue_worker_actions(
             and not preheal_carrier
             and not spawn_funded_without_this_deposit
         ):
-            worker.deposit()
-            acted.add(worker.id)
             deposited = min(int(worker.cargo or 0), pending_space)
-            pending_deposit += deposited
-            pending_space -= deposited
-            continue
+            if not _deposit_would_overflow_after_combat(
+                turn,
+                memory,
+                planned_moves,
+                pending_deposit=pending_deposit,
+                next_amount=deposited,
+            ):
+                worker.deposit()
+                acted.add(worker.id)
+                pending_deposit += deposited
+                pending_space -= deposited
+                continue
 
         # The Beacon carrier's safety and bonus harvest outrank ordinary
         # resource routing.  Deposit is legal even with cargo and is resolved
@@ -2413,11 +2478,18 @@ def _queue_worker_actions(
                 # If every exit is blocked or still illegal, DEPOSIT at least
                 # saves cargo before combat removes the carrier.  Escape is
                 # attempted first because preserving the Beacon is worth more.
-                worker.deposit()
-                acted.add(worker.id)
                 deposited = min(int(worker.cargo or 0), pending_space)
-                pending_deposit += deposited
-                pending_space -= deposited
+                if not _deposit_would_overflow_after_combat(
+                    turn,
+                    memory,
+                    planned_moves,
+                    pending_deposit=pending_deposit,
+                    next_amount=deposited,
+                ):
+                    worker.deposit()
+                    acted.add(worker.id)
+                    pending_deposit += deposited
+                    pending_space -= deposited
             continue
 
         if is_runner and _owned_beacon_carrier(turn, memory) is None:
@@ -3014,15 +3086,46 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
 
     _refresh_defense_state(turn, memory)
 
+    friendly_snapshots = []
+    if turn.core is not None:
+        friendly_snapshots.append(
+            EntitySnapshot(
+                _uuid_key(turn.core.id),
+                EntityKind.CORE,
+                tuple(turn.core.position),
+                max(0, int(turn.core.hp)),
+                max(0, int(getattr(turn.core, "shield", 0))),
+            )
+        )
+    for unit in getattr(turn, "units", ()):
+        unit_type = _enum_name(getattr(unit, "unit_type", None))
+        if unit_type not in {"WORKER", "VANGUARD", "RANGER"}:
+            continue
+        friendly_snapshots.append(
+            EntitySnapshot(
+                _uuid_key(unit.id),
+                EntityKind(unit_type),
+                tuple(unit.position),
+                max(0, int(unit.hp)),
+            )
+        )
+    visible_cells = compute_visible_cells(friendly_snapshots, _obstacles_for(turn, memory))
+    invalidated_resources = {
+        tuple(getattr(event, "position"))
+        for event in getattr(turn, "events", ()) or ()
+        if _enum_name(getattr(event, "event_type", "")) == "HARVEST_FAILED"
+        and _enum_name(getattr(event, "reason_code", ""))
+        in {"RESOURCE_DEPLETED", "NOT_RESOURCE_CELL"}
+        and getattr(event, "position", None) is not None
+    }
+    invalidate_resource_targets(memory.economy, invalidated_resources)
+
     refresh_economy_memory(
         memory.economy,
         tick=int(getattr(turn, "tick", 0)),
         workers=tuple(getattr(turn, "workers", ())),
         visible_resources=getattr(turn, "resource_cells", ()),
-        friendly_positions=(
-            turn.core.position,
-            *(unit.position for unit in getattr(turn, "units", ())),
-        ),
+        visible_cells=visible_cells,
         settings=EconomySettings(
             resource_memory_ttl=int(
                 getattr(memory.policy, "resource_memory_ttl", 64)
@@ -3189,7 +3292,9 @@ def play(api_key: str | None = None, adaptive=None) -> None:
                     # from submitting its next legal plan.
                     profile = StrategyProfile.default()
                 memory.policy = profile
-                choose_actions(turn, memory)
+                from app.strategy.planner_adapter import plan_turn
+
+                _planner_result = plan_turn(turn, memory, profile)
                 accepted = turn.submit()
                 print(f"tick={accepted.tick} accepted={accepted.accepted}")
                 try:

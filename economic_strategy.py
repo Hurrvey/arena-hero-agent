@@ -10,7 +10,7 @@ from __future__ import annotations
 import heapq
 import sys
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field
 
 
@@ -118,18 +118,17 @@ def refresh_economy_memory(
     tick: int,
     workers: Sequence[object],
     visible_resources: Iterable[Position],
-    friendly_positions: Iterable[Position],
+    visible_cells: AbstractSet[Position],
     settings: EconomySettings,
 ) -> None:
     """Merge one Turn observation and remove stale or contradicted hints."""
 
     current_resources = set(visible_resources)
-    friendly = tuple(friendly_positions)
     for cell in current_resources:
         memory.resource_last_seen[cell] = tick
     for cell, last_seen in tuple(memory.resource_last_seen.items()):
         expired = tick - last_seen > settings.resource_memory_ttl
-        definitely_visible = any(_distance(position, cell) <= 1 for position in friendly)
+        definitely_visible = cell in visible_cells
         if expired or (definitely_visible and cell not in current_resources):
             memory.resource_last_seen.pop(cell, None)
 
@@ -175,6 +174,21 @@ def refresh_economy_memory(
             memory.worker_history[worker_key] = history
         history.append(tuple(worker.position))
         memory.chunk_last_seen[_chunk(tuple(worker.position))] = tick
+
+
+def invalidate_resource_targets(
+    memory: EconomyMemory,
+    positions: Iterable[Position],
+) -> None:
+    """Clear disproven resource hints and every assignment derived from them."""
+
+    invalid = set(positions)
+    for position in invalid:
+        memory.resource_last_seen.pop(position, None)
+    for worker_key, target in tuple(memory.resource_intents.items()):
+        if target in invalid:
+            memory.resource_intents.pop(worker_key, None)
+            memory.resource_progress.pop(worker_key, None)
 
 
 def _estimated_path_cost(

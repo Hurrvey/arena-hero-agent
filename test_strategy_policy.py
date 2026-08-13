@@ -149,3 +149,7 @@ def test_internal_score_values_defense_without_rewarding_permanent_turtling():
 
     assert exposed < -10
     assert 0 < defended < 2
+
+
+def test_overflow_destroyed_has_an_explicit_negative_score_weight():
+    assert internal_score({"overflow_destroyed": 3}) < 0

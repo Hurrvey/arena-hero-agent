@@ -758,6 +758,7 @@ class Scorecard:
             "units_lost": self.units_lost,
             "core_losses": self.core_losses,
             "failed_actions": self.failed_actions,
+            "overflow_destroyed": self.overflow_destroyed,
             "zero_resource_ticks": self.zero_resource_ticks,
             "idle_worker_ticks": self.idle_worker_ticks,
             "route_stalls": self.route_stalls,

@@ -9,6 +9,7 @@ from economic_strategy import (
     advance_stalled_targets,
     assign_resource_targets,
     detect_two_cell_oscillation,
+    invalidate_resource_targets,
     refresh_economy_memory,
     scout_targets,
     update_runner_lease,
@@ -29,7 +30,7 @@ def test_visible_disappearance_and_ttl_remove_resource_hints() -> None:
         tick=10,
         workers=(one,),
         visible_resources={(1, 0), (9, 9)},
-        friendly_positions=((0, 0),),
+        visible_cells={(0, 0), (1, 0)},
         settings=settings,
     )
     refresh_economy_memory(
@@ -37,7 +38,7 @@ def test_visible_disappearance_and_ttl_remove_resource_hints() -> None:
         tick=11,
         workers=(one,),
         visible_resources={(9, 9)},
-        friendly_positions=((0, 0),),
+        visible_cells={(0, 0), (1, 0)},
         settings=settings,
     )
 
@@ -49,11 +50,53 @@ def test_visible_disappearance_and_ttl_remove_resource_hints() -> None:
         tick=16,
         workers=(one,),
         visible_resources=set(),
-        friendly_positions=((0, 0),),
+        visible_cells={(0, 0)},
         settings=settings,
     )
 
     assert memory.resource_last_seen == {}
+
+
+def test_resource_visible_by_core_but_missing_is_removed_immediately() -> None:
+    memory = EconomyMemory(resource_last_seen={(5, 0): 9})
+
+    refresh_economy_memory(
+        memory,
+        tick=10,
+        workers=(),
+        visible_resources=(),
+        visible_cells={(5, 0)},
+        settings=EconomySettings(),
+    )
+
+    assert memory.resource_last_seen == {}
+
+
+def test_resource_behind_supercover_obstacle_remains_a_fallible_hint() -> None:
+    memory = EconomyMemory(resource_last_seen={(3, 0): 9})
+
+    refresh_economy_memory(
+        memory,
+        tick=10,
+        workers=(),
+        visible_resources=(),
+        visible_cells={(0, 0), (1, 0), (2, 0)},
+        settings=EconomySettings(),
+    )
+
+    assert memory.resource_last_seen == {(3, 0): 9}
+
+
+def test_resource_depleted_event_clears_intent_before_reassignment() -> None:
+    memory = EconomyMemory(
+        resource_last_seen={(4, 0): 2},
+        resource_intents={b"worker": (4, 0)},
+    )
+
+    invalidate_resource_targets(memory, ((4, 0),))
+
+    assert memory.resource_last_seen == {}
+    assert memory.resource_intents == {}
 
 
 def test_resource_assignment_is_one_to_one_and_minimum_cost() -> None:
