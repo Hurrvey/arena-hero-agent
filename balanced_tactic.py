@@ -3270,8 +3270,17 @@ def load_api_key(env_path=None) -> str:
 
 def play(api_key: str | None = None, adaptive=None) -> None:
     coordinator = adaptive
+    account_lock = None
     try:
         key = api_key or load_api_key()
+        from app.runtime.account_lock import AccountLock
+
+        account_lock = AccountLock.from_api_key(
+            key,
+            os.environ.get("ARENA_HERO_LOCK_DIR") or "data/locks",
+            runtime_id=f"cli-{os.getpid()}",
+        )
+        account_lock.acquire()
         if coordinator is None:
             # Import lazily: importing the tactic never initializes adaptive
             # threads or reads credentials.
@@ -3336,6 +3345,8 @@ def play(api_key: str | None = None, adaptive=None) -> None:
                 coordinator.close()
             except Exception:
                 pass
+        if account_lock is not None:
+            account_lock.release()
 
 
 if __name__ == "__main__":
