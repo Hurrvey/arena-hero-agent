@@ -1,0 +1,36 @@
+@media (max-width: 1200px) {
+  .command-bar { grid-template-columns:1fr auto; height:auto; min-height:68px; }
+  .runtime-strip { grid-column:1 / -1; grid-row:2; order:3; margin-top:8px; min-width:0; }
+  .metrics-grid { grid-template-columns:repeat(3,1fr); }
+  .operations-grid { grid-template-columns:1fr; }
+  .map-panel { min-height:500px; }
+  .right-stack { grid-template-columns:1fr 1fr; grid-template-rows:420px; }
+}
+@media (max-width: 768px) {
+  .command-bar { padding:9px 14px; }
+  .brand { font-size:17px; }
+  .brand img { width:35px; }
+  .nav-links { display:none; }
+  .command-actions .button { padding:0 12px; }
+  .workspace { padding:10px 12px 20px; }
+  .metrics-grid { grid-template-columns:repeat(2,1fr); }
+  .metric-card { min-height:76px; }
+  .operations-grid { min-height:0; }
+  .map-panel { min-height:450px; }
+  .right-stack { grid-template-columns:1fr; grid-template-rows:auto auto; }
+  .action-row { grid-template-columns:75px 95px 1fr; }
+  .action-row > :last-child { display:none; }
+}
+@media (max-width: 480px) {
+  .command-bar { grid-template-columns:1fr; }
+  .command-actions { margin-top:8px; justify-content:stretch; }
+  .command-actions .button { flex:1; }
+  .runtime-strip { gap:10px; font-size:12px; }
+  .runtime-divider:nth-of-type(2), .runtime-strip .strategy-label { display:none; }
+  .metrics-grid { grid-template-columns:1fr; }
+  .metrics-grid { gap:8px; }
+  .metric-card { min-height:74px; padding:10px 14px; grid-template-columns:44px 1fr; }
+  .map-panel { min-height:410px; }
+  .map-legend { max-width:calc(100% - 24px); flex-wrap:wrap; }
+  .panel-header { align-items:flex-start; padding:10px 12px; flex-direction:column; }
+}

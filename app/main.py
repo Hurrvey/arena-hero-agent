@@ -144,11 +144,10 @@ def create_app(
             StaticFiles(directory=configured.asset_directory),
             name="arena-hero-assets",
         )
-    frontend_assets = configured.static_directory / "assets"
-    if frontend_assets.is_dir():
+    if configured.static_directory.is_dir():
         app.mount(
             "/assets/app",
-            StaticFiles(directory=frontend_assets),
+            StaticFiles(directory=configured.static_directory),
             name="app-assets",
         )
 

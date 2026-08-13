@@ -1,0 +1,16 @@
+.app-shell { min-height: 100vh; }
+.command-bar { height: 68px; padding: 8px 28px; display: grid; grid-template-columns: minmax(260px, 1fr) auto minmax(260px, 1fr); align-items: center; border-bottom: 1px solid var(--line); background: rgba(3, 9, 20, .92); backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 20; }
+.brand { display: flex; align-items: center; gap: 14px; font-family: var(--display); font-weight: 700; letter-spacing: .04em; font-size: 22px; }
+.brand img { width: 42px; filter: drop-shadow(0 0 12px rgba(45,156,255,.35)); }
+.runtime-strip { min-width: 460px; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(180deg, rgba(16,32,51,.82), rgba(7,17,31,.82)); }
+.command-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.workspace { padding: 12px 28px 28px; }
+.metrics-grid { display: grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap: 12px; }
+.operations-grid { margin-top: 12px; display: grid; grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr); gap: 12px; min-height: 478px; }
+.right-stack { display: grid; grid-template-rows: 1.04fr .82fr; gap: 12px; min-height: 0; }
+.roster-panel { margin-top: 12px; }
+.panel { border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(145deg, rgba(13,29,46,.96), rgba(6,16,28,.96)); box-shadow: var(--shadow); overflow: hidden; }
+.panel-header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.panel-title { margin: 0; font-family: var(--display); letter-spacing: .03em; font-size: 18px; }
+.route-view { display: none; }
+.route-view.is-active { display: block; }

@@ -72,9 +72,19 @@ async def live(websocket: WebSocket, after_seq: int = Query(default=0, alias="af
     queue = services.broadcaster.subscribe()
     try:
         while True:
-            event = await queue.get()
-            await websocket.send_json(event)
-    except (WebSocketDisconnect, RuntimeError):
+            event_task = asyncio.create_task(queue.get())
+            disconnect_task = asyncio.create_task(websocket.receive())
+            done, pending = await asyncio.wait(
+                {event_task, disconnect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if disconnect_task in done:
+                break
+            await websocket.send_json(event_task.result())
+    except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
         return
     finally:
         services.broadcaster.unsubscribe(queue)

@@ -1,0 +1,23 @@
+:root {
+  color-scheme: dark;
+  --bg-void: #030914;
+  --bg-deep: #07111f;
+  --panel: #0b1828;
+  --panel-raised: #0f2033;
+  --line: #23384d;
+  --line-hot: #32608b;
+  --text: #e9f2fb;
+  --muted: #91a4b9;
+  --friendly: #2d9cff;
+  --friendly-soft: #55cdfc;
+  --success: #35d17c;
+  --beacon: #ffc844;
+  --warning: #ffb83e;
+  --danger: #ff4d5f;
+  --obstacle: #7f93a9;
+  --display: "Bahnschrift Condensed", "Arial Narrow", "Microsoft YaHei", sans-serif;
+  --body: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  --radius: 7px;
+  --shadow: 0 16px 40px rgba(0, 0, 0, .24);
+}

@@ -5,11 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#07111f">
     <title>Arena Hero Agent</title>
+    <link rel="stylesheet" href="/assets/app/css/tokens.css">
+    <link rel="stylesheet" href="/assets/app/css/base.css">
+    <link rel="stylesheet" href="/assets/app/css/layout.css">
+    <link rel="stylesheet" href="/assets/app/css/components.css">
+    <link rel="stylesheet" href="/assets/app/css/map.css">
+    <link rel="stylesheet" href="/assets/app/css/responsive.css">
   </head>
   <body>
-    <main id="app">
-      <h1>Arena Hero Agent</h1>
-      <p>本地战术控制台正在初始化。</p>
-    </main>
+    <div class="app-shell"><header class="command-bar"><div class="brand"><img src="/assets/arena-hero/brand/logo-mark.svg" alt=""><span>ARENA HERO AGENT</span><nav class="nav-links" aria-label="主导航"><a class="nav-link active" data-route href="/">总览</a><a class="nav-link" data-route href="/strategy">策略</a><a class="nav-link" data-route href="/adaptive">自适应</a><a class="nav-link" data-route href="/history">历史</a><a class="nav-link" data-route href="/settings">设置</a></nav></div><div id="runtime-strip" class="runtime-strip" aria-live="polite"><span class="status-dot"></span><span class="status-label muted">连接中</span></div><div class="command-actions"><button id="start-agent" class="button button-primary" data-control="start">▶ 启动</button><button id="pause-agent" class="button button-primary" data-control="pause" hidden>Ⅱ 暂停</button><button id="resume-agent" class="button button-primary" data-control="resume" hidden>▶ 继续</button><button id="stop-agent" class="button button-danger" data-control="stop" disabled>■ 停止</button></div></header><div id="connection-banner" class="connection-banner" role="status"></div><main class="workspace"><div id="route-view"><div class="empty-state"><div><strong>正在连接本地 Runtime</strong>读取权威状态、计划和事件。</div></div></div></main></div><div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="/assets/app/js/app.js"></script>
   </body>
 </html>
