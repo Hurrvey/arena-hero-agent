@@ -129,4 +129,20 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON metric_points(session_id, tick);
         """,
     ),
+    (
+        2,
+        """
+        CREATE TABLE IF NOT EXISTS adaptive_observations (
+            tick INTEGER PRIMARY KEY CHECK (tick >= 0),
+            base_revision INTEGER NOT NULL REFERENCES strategy_profiles(revision),
+            projection_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS adaptive_cycles_end_tick
+            ON adaptive_cycles(end_tick);
+        CREATE INDEX IF NOT EXISTS adaptive_candidates_cycle_status
+            ON adaptive_candidates(cycle_id, status);
+        """,
+    ),
 )

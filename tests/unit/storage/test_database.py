@@ -27,7 +27,7 @@ def test_migrations_are_idempotent(tmp_path) -> None:
         versions = connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert versions == [(1,)]
+    assert versions == [(1,), (2,)]
 
 
 def test_turn_batch_and_service_events_commit_atomically(tmp_path) -> None:

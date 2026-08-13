@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 from threading import RLock
 
-from adaptive_strategy import AdaptiveCoordinator, load_dotenv
+from adaptive_strategy import DisabledAdaptiveCoordinator, SkillBundleError, load_dotenv
+from app.adaptive import SqliteAdaptiveCoordinator
 from app.errors import AppError
 from app.observability.redaction import PublicIdMapper
-from app.storage import MetricsRepository, RuntimeStore, StrategyRepository
+from app.storage import AdaptiveRepository, MetricsRepository, RuntimeStore, StrategyRepository
 from app.strategy.planner_adapter import plan_turn
 
 from .agent_runtime import AgentRuntime
@@ -26,12 +27,14 @@ class RuntimeServicesFactory:
         runtime_store: RuntimeStore,
         strategies: StrategyRepository,
         metrics: MetricsRepository,
+        adaptive: AdaptiveRepository,
         broadcaster,
     ) -> None:
         self.settings = settings
         self.runtime_store = runtime_store
         self.strategies = strategies
         self.metrics = metrics
+        self.adaptive = adaptive
         self.broadcaster = broadcaster
         self._lock = RLock()
         self._session_id: str | None = None
@@ -56,7 +59,14 @@ class RuntimeServicesFactory:
         with self._lock:
             self._session_id = session.session_id
             self._mapper = PublicIdMapper(session.session_id)
-        coordinator = AdaptiveCoordinator.from_env(self.settings.dotenv_path)
+        try:
+            coordinator = SqliteAdaptiveCoordinator.from_env(
+                repository=self.adaptive,
+                strategies=self.strategies,
+                env_path=self.settings.dotenv_path,
+            )
+        except (OSError, ValueError, SkillBundleError):
+            coordinator = DisabledAdaptiveCoordinator()
         self._coordinator = coordinator
         return AgentRuntime(
             api_key=api_key,
@@ -107,6 +117,9 @@ class RuntimeServicesFactory:
         else:
             public_result = batch.result.public_mapping()
             raw_plan = json_value(batch.result.plan)
+            public_state["defenseLevel"] = str(
+                batch.result.diagnostics.defense.get("level", "CLEAR")
+            ).upper()
             events = self.runtime_store.save_turn_batch(
                 session_id=session_id,
                 tick=int(batch.tick or 0),
@@ -134,17 +147,31 @@ class RuntimeServicesFactory:
             return
         observer = getattr(coordinator, "observe_snapshot_with_diagnostics", None)
         if callable(observer):
-            observer(turn, receipt, self.strategies.current().profile, result.diagnostics.economy)
+            diagnostics = {
+                **dict(result.diagnostics.economy),
+                "defense_level": result.diagnostics.defense.get("level", "CLEAR"),
+                "incoming_core_damage": result.diagnostics.defense.get("incoming_damage", 0),
+            }
+            observer(turn, receipt, self.strategies.current().profile, diagnostics)
         else:
             coordinator.observe(turn, receipt)
 
+    def close_adaptive(self) -> None:
+        coordinator = self._coordinator
+        self._coordinator = None
+        if coordinator is not None:
+            coordinator.close()
 
-def build_runtime_manager(*, settings, runtime_store, strategies, metrics, broadcaster):
+
+def build_runtime_manager(
+    *, settings, runtime_store, strategies, metrics, adaptive, broadcaster
+):
     factory = RuntimeServicesFactory(
         settings=settings,
         runtime_store=runtime_store,
         strategies=strategies,
         metrics=metrics,
+        adaptive=adaptive,
         broadcaster=broadcaster,
     )
     return RuntimeManager(factory.build), factory

@@ -67,6 +67,7 @@ def create_app(
             runtime_store=runtime_store,
             strategies=strategies,
             metrics=metrics_repository,
+            adaptive=adaptive_repository,
             broadcaster=broadcaster,
         )
     container = Services(

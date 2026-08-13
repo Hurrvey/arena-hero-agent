@@ -256,21 +256,24 @@ class RuntimeStore:
     ) -> list[dict[str, object]]:
         if not 1 <= limit <= 1000:
             raise ValueError("event marker limit is invalid")
-        where = "WHERE tick IS NOT NULL"
-        parameters: tuple[object, ...]
-        if session_id is None:
-            parameters = (limit,)
-        else:
-            where += " AND session_id = ?"
-            parameters = (session_id, limit)
         with self.database.connect() as connection:
-            rows = connection.execute(
-                f"""
-                SELECT tick, event_type, created_at FROM service_events
-                {where} ORDER BY seq DESC LIMIT ?
-                """,
-                parameters,
-            ).fetchall()
+            if session_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT tick, event_type, created_at FROM service_events
+                    WHERE tick IS NOT NULL ORDER BY seq DESC LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT tick, event_type, created_at FROM service_events
+                    WHERE tick IS NOT NULL AND session_id = ?
+                    ORDER BY seq DESC LIMIT ?
+                    """,
+                    (session_id, limit),
+                ).fetchall()
         return [
             {"tick": int(row[0]), "eventType": str(row[1]), "createdAt": str(row[2])}
             for row in reversed(rows)

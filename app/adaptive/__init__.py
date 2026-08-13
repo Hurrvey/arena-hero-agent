@@ -1,5 +1,6 @@
-"""Adaptive strategy application services."""
+"""Persisted adaptive evaluation boundary."""
 
-from .legacy_import import LegacyImporter, LegacyImportResult
+from .coordinator import SqliteAdaptiveCoordinator
+from .models import WindowScore
 
-__all__ = ["LegacyImportResult", "LegacyImporter"]
+__all__ = ["SqliteAdaptiveCoordinator", "WindowScore"]

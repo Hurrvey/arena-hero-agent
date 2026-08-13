@@ -167,6 +167,15 @@ class AgentRuntime:
         finally:
             if self._client is not None:
                 self._client.close()
+            closer = getattr(self._adaptive_observer, "close", None)
+            if not callable(closer):
+                closer = getattr(
+                    getattr(self._adaptive_observer, "__self__", None),
+                    "close_adaptive",
+                    None,
+                )
+            if callable(closer):
+                closer()
             self._lock.release()
 
     def handle_event(self, event: object) -> None:

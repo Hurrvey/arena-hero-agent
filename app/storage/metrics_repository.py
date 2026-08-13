@@ -36,23 +36,24 @@ class MetricsRepository:
     ) -> list[dict[str, object]]:
         if not 1 <= limit <= 1000:
             raise ValueError("metric series limit is invalid")
-        parameters: tuple[object, ...]
-        where = ""
-        if session_id is None:
-            parameters = (limit,)
-        else:
-            where = "WHERE session_id = ?"
-            parameters = (session_id, limit)
         with self.database.connect() as connection:
-            rows = connection.execute(
-                f"""
-                SELECT session_id, tick, metric_name, metric_value
-                FROM metric_points {where}
-                ORDER BY tick DESC, metric_name
-                LIMIT ?
-                """,
-                parameters,
-            ).fetchall()
+            if session_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT session_id, tick, metric_name, metric_value
+                    FROM metric_points ORDER BY tick DESC, metric_name LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT session_id, tick, metric_name, metric_value
+                    FROM metric_points WHERE session_id = ?
+                    ORDER BY tick DESC, metric_name LIMIT ?
+                    """,
+                    (session_id, limit),
+                ).fetchall()
         points: dict[tuple[str, int], dict[str, object]] = {}
         for row in reversed(rows):
             key = (str(row[0]), int(row[1]))
