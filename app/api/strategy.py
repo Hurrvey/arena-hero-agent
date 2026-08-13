@@ -22,6 +22,14 @@ class StrategyUpdate(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class StrategyRollback(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    expected_revision: int = Field(alias="expectedRevision", ge=1)
+    target_revision: int = Field(alias="targetRevision", ge=1)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 def _public(revision) -> dict[str, object]:
     return {
         "revision": revision.revision,
@@ -67,11 +75,7 @@ def update_strategy(payload: StrategyUpdate, request: Request) -> dict[str, obje
 
 @router.get("/strategy/history")
 def history(request: Request) -> dict[str, object]:
-    return {
-        "items": [
-            _public(item) for item in request.app.state.services.strategies.history()
-        ]
-    }
+    return {"items": [_public(item) for item in request.app.state.services.strategies.history()]}
 
 
 @router.get("/strategy/schema")
@@ -88,3 +92,20 @@ def schema() -> dict[str, object]:
     )
     fields["schema_version"] = {"minimum": 1, "maximum": 1, "kind": "integer"}
     return {"schemaVersion": 1, "fields": fields}
+
+
+@router.post("/strategy/rollback")
+def rollback_strategy(payload: StrategyRollback, request: Request) -> dict[str, object]:
+    try:
+        revision = request.app.state.services.strategies.rollback(
+            expected_revision=payload.expected_revision,
+            target_revision=payload.target_revision,
+            reason=payload.reason,
+        )
+    except (RevisionConflict, LookupError) as exc:
+        raise AppError(
+            "STRATEGY_REVISION_CONFLICT",
+            "The requested rollback target is unavailable",
+            409,
+        ) from exc
+    return _public(revision)

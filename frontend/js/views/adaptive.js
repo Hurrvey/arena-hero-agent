@@ -8,7 +8,20 @@ export function renderAdaptive(root, status, reports) {
 }
 
 function candidateCard(item) {
-  const disabled = item.status !== "READY" || item.disabledReason;
-  const reason = item.disabledReason || (disabled ? `候选状态 ${item.status} 不允许应用` : "通过样本、版本和 Skill 指纹校验");
-  return `<article class="panel candidate-card"><header class="panel-header"><h2 class="panel-title">窗口 ${escapeHtml(item.startTick)} → ${escapeHtml(item.endTick)}</h2><span class="candidate-status">${escapeHtml(item.status)}</span></header><div class="candidate-body"><div class="score-grid"><div><span>样本</span><strong>${escapeHtml(item.sampleCount)} 个样本</strong></div><div><span>总分</span><strong>${escapeHtml(item.rawScore)}</strong></div><div><span>归一化</span><strong>${Number(item.scorePerTick || 0).toFixed(2)} / Tick</strong></div></div><div class="fingerprint-row"><span>Skill</span><code>${escapeHtml(item.skillFingerprint)}</code></div><ul class="diff-list">${(item.changes || []).map((change) => `<li><code>${escapeHtml(change.field)}</code><span>${escapeHtml(change.before)}</span><span>→</span><strong>${escapeHtml(change.after)}</strong></li>`).join("") || "<li>该窗口没有候选 Profile 差异。</li>"}</ul><div class="candidate-actions"><button class="button button-primary" ${disabled ? "disabled" : ""}>应用候选</button><button class="button" ${disabled ? "disabled" : ""}>拒绝</button></div><p class="validation-reason">${escapeHtml(reason)}</p></div></article>`;
+  const applyDisabled = !["READY", "REVIEW_REQUIRED"].includes(item.status) || item.disabledReason;
+  const rejectDisabled = !item.candidateId || !["READY", "REVIEW_REQUIRED", "STALE"].includes(item.status);
+  const reason = item.disabledReason || (applyDisabled ? `候选状态 ${item.status} 不允许应用` : "通过样本、版本和 Skill 指纹校验");
+  return `<article class="panel candidate-card" data-candidate="${escapeHtml(item.candidateId || "")}"><header class="panel-header"><h2 class="panel-title">窗口 ${escapeHtml(item.startTick)} → ${escapeHtml(item.endTick)}</h2><span class="candidate-status">${escapeHtml(item.status)}</span></header><div class="candidate-body"><div class="score-grid"><div><span>样本</span><strong>${escapeHtml(item.sampleCount)} 个样本</strong></div><div><span>总分</span><strong>${escapeHtml(item.rawScore)}</strong></div><div><span>归一化</span><strong>${Number(item.scorePerTick || 0).toFixed(2)} / Tick</strong></div></div><div class="fingerprint-row"><span>Skill</span><code>${escapeHtml(item.skillFingerprint)}</code></div><ul class="diff-list">${(item.changes || []).map((change) => `<li><code>${escapeHtml(change.field)}</code><span>${escapeHtml(change.before)}</span><span>→</span><strong>${escapeHtml(change.after)}</strong></li>`).join("") || "<li>该窗口没有候选 Profile 差异。</li>"}</ul><div class="candidate-actions"><button class="button button-primary" data-candidate-action="APPLY" ${applyDisabled ? "disabled" : ""}>应用候选</button><button class="button" data-candidate-action="REJECT" ${rejectDisabled ? "disabled" : ""}>拒绝</button></div><p class="validation-reason">${escapeHtml(reason)}</p></div></article>`;
+}
+
+export function installAdaptive(root, api, strategy) {
+  root.querySelectorAll("[data-candidate-action]").forEach((button) => button.addEventListener("click", async () => {
+    const card = button.closest("[data-candidate]"); button.disabled = true;
+    try {
+      const result = await api.decideCandidate(card.dataset.candidate, { action:button.dataset.candidateAction, expectedRevision:strategy?.revision || 1 });
+      card.querySelector(".validation-reason").textContent = result.status === "PENDING_ACTIVATION" ? "候选已进入待激活版本" : "候选已拒绝";
+      card.querySelector(".candidate-status").textContent = result.status;
+      card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+    } catch (error) { card.querySelector(".validation-reason").textContent = `操作被服务器拒绝：${error.details?.reason || error.message}`; button.disabled = false; }
+  }));
 }

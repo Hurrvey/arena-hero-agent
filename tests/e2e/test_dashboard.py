@@ -24,13 +24,36 @@ def install_api_mocks(page: Page) -> None:
     plan = {
         "tick": 1234,
         "status": "ACCEPTED",
-        "explanation": {"actions": [{"entityId": "R1", "actionType": "SHOOT", "reasonCode": "VISIBLE_COMBAT_TARGET", "riskBefore": 1, "riskAfter": 0}]},
+        "explanation": {
+            "actions": [
+                {
+                    "entityId": "R1",
+                    "actionType": "SHOOT",
+                    "reasonCode": "VISIBLE_COMBAT_TARGET",
+                    "riskBefore": 1,
+                    "riskAfter": 0,
+                }
+            ]
+        },
     }
     payloads = {
         "/api/v1/agent/status": {"runtimeId": "test", "status": "RUNNING", "lastTick": 1234},
         "/api/v1/state/current": state,
         "/api/v1/plan/current": plan,
-        "/api/v1/events?afterSeq=0&limit=300": {"events": [{"seq": 1, "eventType": "plan.accepted", "tick": 1234}], "lastSeq": 1},
+        "/api/v1/events?tail=true&limit=300": {
+            "events": [
+                {
+                    "schemaVersion": 1,
+                    "seq": 1,
+                    "type": "plan.accepted",
+                    "at": "2026-08-13T00:00:00Z",
+                    "runtimeId": "test",
+                    "tick": 1234,
+                    "payload": {},
+                }
+            ],
+            "lastSeq": 1,
+        },
         "/api/v1/metrics/summary": {"ticks": 1234},
         "/api/v1/strategy": {"revision": 17, "profile": {}},
         "/api/v1/adaptive/status": {"enabled": False},

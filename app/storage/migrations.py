@@ -145,4 +145,25 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON adaptive_candidates(cycle_id, status);
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE IF NOT EXISTS plan_receipts (
+            session_id TEXT NOT NULL,
+            tick INTEGER NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('AGENT', 'MANUAL')),
+            status TEXT NOT NULL,
+            receipt_json TEXT NOT NULL,
+            raw_plan_json TEXT NOT NULL,
+            public_plan_json TEXT NOT NULL,
+            received_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, tick, source),
+            FOREIGN KEY (session_id)
+                REFERENCES runtime_sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS plan_receipts_received_at
+            ON plan_receipts(received_at);
+        """,
+    ),
 )

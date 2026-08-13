@@ -1,6 +1,6 @@
-# Arena Hero Bot
+# Arena Hero Agent
 
-一个面向 Arena Hero 的战术脚本。它读取每个 Turn 的当前可见状态，为 Core、Worker、Ranger 和 Vanguard 选择合法行动，再通过官方 Python SDK 提交完整计划。
+一个面向 Arena Hero 的本地自动化 Agent：确定性战术负责每个 Turn 的完整计划，FastAPI + Canvas 控制台负责启动、暂停、观察、策略版本、自适应候选与历史回放，SQLite 保存权威快照和审计记录。
 
 > Arena Hero 没有单一总分，而是三个独立的 lifetime 排行榜：Beacon 持有 Tick、造成伤害、Core 摧毁参与。策略优先保护 Beacon 持有时间，再把剩余行动用于可见敌人伤害和 Core 参与；这能提高积分效率，但不能承诺固定名次或保证第一名。
 
@@ -11,6 +11,10 @@
 它使用同步的 ArenaHeroClient 连接 Arena Hero，并且每个 Turn 只提交一次当前计划。API key 只在本地运行时读取，不写入代码或日志。
 
 ## 主要特性
+
+- **本地战术控制台**：`http://127.0.0.1:8000` 提供实时地图、计划理由、事件、单位、策略编辑、自适应评分、历史和脱敏设置；Arena Hero/LLM key 不会发送到浏览器。
+- **可靠 Runtime**：CLI 与 Web 共享同一账户锁；每个新 Tick 最多提交一次，10,000 Tick 长跑使用有界去重窗口。
+- **SQLite 权威历史**：快照、计划、事件、指标、策略 revision、固定自适应窗口和候选统一写入 `data/arena_hero_agent.db`。
 
 - **有边界的 Beacon 任务**：Beacon 坐标始终公开，但未知状态不会立刻抽走经济 Worker。经济达到 6 名 Worker 后才允许远程 runner；当前明确为 `GROUND` 且距离较近时可以机会性抢取。runner 必须持续缩短距离，停滞或 A-B-A-B 往返会被释放并进入冷却。
 - **载体保命与护卫**：只把当前 Turn 明确可见的己方 carrier 当作事实；状态进入迷雾时按未知处理，避免把过期 carrier 当成 10 点 shield cap；可见威胁会触发回 Core、护卫或在 Core 同格预排战后 HEAL。
@@ -28,7 +32,7 @@
 - 一个 Arena Hero 账号和对应的 API key。
 - 能访问 Arena Hero API，默认端点为 https://api.arenahero.io。
 
-依赖版本记录在 **requirements.txt** 中：
+完整依赖与开发工具锁定在 `pyproject.toml` / `uv.lock`；`requirements.txt` 保留 CLI 最小兼容安装：
 
 ~~~text
 arena-hero>=0.2.9,<0.3
@@ -36,15 +40,14 @@ arena-hero>=0.2.9,<0.3
 
 ## 安装
 
-在 PowerShell 中进入项目目录并安装依赖：
+推荐使用 uv 和仓库固定的 Python 3.11：
 
 ~~~powershell
 cd D:\arena-hero
-python --version
-python -m pip install -r requirements.txt
+uv sync --python 3.11 --group dev
 ~~~
 
-如果系统中有多个 Python，请确保安装依赖和运行脚本使用的是同一个 python 命令。
+没有 uv 时，CLI 仍可用 `python -m pip install -r requirements.txt`；Web 控制台需要安装 `pyproject.toml` 中的完整依赖。
 
 ## 配置 API key
 
@@ -107,13 +110,26 @@ Remove-Item Env:ARENA_HERO_API_KEY
 - 不要提交包含密钥的 .env 文件；仓库的 .gitignore 已经忽略 .env，但提交前仍应检查 git status。
 - GitHub 登录凭据和 Arena Hero API key 是两套不同的凭据。
 
-## 启动战术
+## 启动 Web 控制台（推荐）
+
+~~~powershell
+cd D:\arena-hero
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+~~~
+
+浏览器访问 `http://127.0.0.1:8000`。Web 服务本身不需要 API key 即可启动并查看空状态、策略和设置；只有点击“启动 Agent”时才读取本地 `.env` 并连接 Arena Hero。服务仅允许 loopback，MVP 不应绑定 `0.0.0.0`。
+
+页面“暂停”会继续接收并保存权威 Turn，但不提交 AGENT 计划；恢复后只从下一次新 Tick 继续，不补交暂停期间错过的旧 Tick。“停止”会关闭 SDK 并释放账户锁。
+
+地图只把当前 Turn 可见的对象画成事实：可见资源消失会立即失效，迷雾区域表示“未知”而不是“没有敌人/资源”。策略内部的短期资源记忆只参与受规则约束的寻路，不会被前端伪装成当前可见事实。计划的 `ACCEPTED` 表示服务已接收；下一 Turn 到达后，上一 Tick 的私有结果会独立保存为 `RESOLVED`，可在历史页查看，二者不会混为同一状态。
+
+### CLI 兼容入口
 
 安装依赖并准备好 API key 后运行：
 
 ~~~powershell
 cd D:\arena-hero
-python .\balanced_tactic.py
+.\.venv\Scripts\python.exe .\balanced_tactic.py
 ~~~
 
 正常运行时，终端会持续输出类似内容：
@@ -127,6 +143,7 @@ tick=124 accepted=True
 - accepted=True 表示本回合的计划已被服务接受，不等同于每个行动都命中或本局已经获胜。
 - 脚本进程必须保持运行，关闭 PowerShell 窗口会停止后续计划提交。
 - 按 Ctrl+C 可以停止脚本。
+- CLI 与 Web 使用同一套账户锁。已经运行其中一个时，另一个会拒绝启动；先停止旧实例，不要并行控制同一账号。
 - 更新 `balanced_tactic.py`、`economic_strategy.py` 或 `skills/arena-hero` 后，正在运行的旧 Python 进程不会热加载修改；请按 Ctrl+C 停止旧进程，再执行同一启动命令。新进程会继续读取本地 `.env`，无需重新声明变量。
 
 ## 可选：双 LLM 自适应评估与重设计
@@ -136,7 +153,7 @@ tick=124 accepted=True
 1. **评估模型**读取仓库内置的 `skills/arena-hero` v0.14 完整规则/SDK 包、聚合事件和 Beacon/经济/防御/战斗 scorecard，输出缺陷、规则风险和改进建议。它会看到零资源 Tick、空闲 Worker、路线停滞、两格振荡、runner 推进、Core 威胁/致命暴露、实际 Core 伤害、守军覆盖和 Worker 疏散等指标。
 2. **重设计模型**读取完全相同且带 SHA-256 指纹的项目内规则包、当前 `StrategyProfile` 和上一步评估，只能输出有限 JSON 参数（Worker 目标、经济启动规模、Beacon 任务半径/租约、资源 TTL/停滞阈值、战斗倾向、载体安全余量、常备守军规模、观察圈和 Worker 疏散半径等）。它不能提交行动、写 Python、执行 Shell 或读取迷雾信息；系统不会执行 LLM 生成的 Python。
 
-候选参数会在本地做 schema、范围、规则指纹和 Beacon/经济下限校验，再以 Turn 边界替换配置。后续周期用同一 scorecard 做金丝雀比较；分数按配置比例下降时自动**回滚**到上一份 profile。LLM 只接收聚合对象/行动计数和事件数值，不接收玩家名、对象 ID、精确坐标或路线目标。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。内部 score 会奖励 Beacon、采集、存入、战斗、runner 推进、守军覆盖和有效疏散，并惩罚零资源停滞、卡路、Core 受伤和致命暴露；守军正向权重很小，防止为了刷分永久龟缩。它只是调参信号，不是官方总榜，也不能保证固定第一名。
+候选参数会写入 SQLite，并做 schema、范围、最低样本数、规则指纹、当前策略 revision 和 `LETHAL` 防御状态校验。默认 `ARENA_HERO_ADAPTIVE_AUTO_APPLY=0`，由控制台人工应用；通过的候选只创建 `PENDING` revision，并在下一 Turn 规划前原子激活。LLM 只接收有界聚合对象/行动计数和事件数值，不接收玩家名、对象 ID、精确坐标、路线、原始计划或提示词。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。它只是调参信号，不是官方总榜，也不能保证固定第一名。
 
 ### 本地 `.env` 配置（推荐）
 
@@ -153,8 +170,9 @@ ARENA_HERO_LLM_MODEL_REASONING_EFFORT=high
 ARENA_HERO_EVALUATOR_MODEL=评估模型名
 ARENA_HERO_DESIGNER_MODEL=重设计模型名
 ARENA_HERO_ADAPTIVE_INTERVAL_TICKS=60
+ARENA_HERO_ADAPTIVE_MINIMUM_SAMPLES=30
 ARENA_HERO_ADAPTIVE_MIN_SECONDS=900
-ARENA_HERO_ADAPTIVE_AUTO_APPLY=1
+ARENA_HERO_ADAPTIVE_AUTO_APPLY=0
 ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO=0.15
 ARENA_HERO_ADAPTIVE_STATE_DIR=adaptive
 ~~~
@@ -172,6 +190,7 @@ $env:ARENA_HERO_LLM_MODEL_REASONING_EFFORT="high"
 $env:ARENA_HERO_EVALUATOR_MODEL="评估模型名"
 $env:ARENA_HERO_DESIGNER_MODEL="重设计模型名"
 $env:ARENA_HERO_ADAPTIVE_INTERVAL_TICKS="60"
+$env:ARENA_HERO_ADAPTIVE_MINIMUM_SAMPLES="30"
 $env:ARENA_HERO_ADAPTIVE_MIN_SECONDS="900"
 $env:ARENA_HERO_ADAPTIVE_AUTO_APPLY="1"
 $env:ARENA_HERO_ADAPTIVE_ROLLBACK_RATIO="0.15"
@@ -181,7 +200,9 @@ python .\balanced_tactic.py
 
 `ARENA_HERO_LLM_BASE_URL` 需要指向 OpenAI-compatible 的版本根路径（例如 `/v1`）；程序会请求其 `/chat/completions`。`ARENA_HERO_LLM_MODEL_VERBOSITY` 支持 `low`、`medium`、`high`；`ARENA_HERO_LLM_MODEL_REASONING_EFFORT` 支持 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`，但具体模型/供应商可能支持更窄的集合。两项都留空时不会把对应字段发送给供应商并保留旧的 `temperature=0`；设置任一项后会省略 `temperature`，避免新模型拒绝不兼容参数。评估模型和重设计模型可以是同一个模型，也可以分别指定。缺少 `ARENA_HERO_ADAPTIVE=1`、独立 LLM key 或任一模型名时，自适应功能安全关闭，原有战术行为不变。将 `ARENA_HERO_ADAPTIVE_AUTO_APPLY` 设为 `0` 可先观察报告而不自动采用候选 profile。
 
-运行态 `telemetry.jsonl`、周期报告和 `state.json` 默认位于仓库根目录的 `adaptive/`，已被 `.gitignore` 排除。这个目录按 `adaptive_strategy.py` 所在项目根解析，因此从其他工作目录启动也不会把状态写到错误位置；显式配置绝对路径仍然有效。规则包优先从项目内 [skills/arena-hero](skills/arena-hero) 加载，每个周期重新读取并计算指纹；因此 clone 到另一台机器时不需要给 LLM 单独安装 skill。更新这个目录后，下一轮评估会自动使用新规则，旧规则的模型输出不会通过指纹校验。只有项目包不存在时才兼容用户目录里的旧安装；项目包存在但缺文件时本轮安全失败，不会跨目录拼接规则。
+Web Runtime 的新状态统一位于 `data/arena_hero_agent.db`；旧版根目录 `adaptive/state.json` 只会在启动时只读、按内容哈希幂等导入 Profile，绝不会删除或改名，`telemetry.jsonl` 与旧报告也不会重新发送给 LLM。确认数据库中的版本正确后可以自行归档旧目录。规则包优先从项目内 [skills/arena-hero](skills/arena-hero) 加载，每个周期重新读取并计算指纹；另一台机器无需单独安装 skill。更新规则包后，旧规则候选会因指纹不符而失效。
+
+浏览器、REST/WebSocket payload、SQLite 公共快照、日志和 LLM prompt 都不会返回 Arena Hero/LLM key。对象 UUID 会转换为会话内短 ID；原始权威快照只留在本机 SQLite。默认数据保留策略由本地 `RetentionService` 提供（原始快照 7 天、服务事件 30 天），执行清理前应先备份 `data/arena_hero_agent.db`。
 
 ## 观察、停止与手动操作
 
@@ -236,7 +257,13 @@ v0.14 已移除每 Tick upkeep。前 20 个 Unit 使用基础价格，Core 在�
 
 ~~~powershell
 cd D:\arena-hero
-python -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
+~~~
+
+首次运行浏览器测试需要安装仓库锁定的 Chromium：
+
+~~~powershell
+.\.venv\Scripts\python.exe -m playwright install chromium
 ~~~
 
 如果终端提示找不到 pytest，只为本地测试安装它：
@@ -255,6 +282,7 @@ python -m pip install pytest
 - Core 移动时禁止存入和生产。
 - API key 不被打印，以及每个 Turn 只提交一次计划。
 - 项目内置 Arena Hero skill 的完整性/优先级、两阶段 evaluator/designer 规则指纹、聚合经济/防御评分、LLM 提示脱敏、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
+- FastAPI/SQLite/REST/WebSocket 契约、`ACCEPTED` 与 `RESOLVED` 生命周期、10,000 Tick 有界长跑、静态素材 MIME、安全头和 Chromium 真实浏览器响应式布局。
 
 也可以运行依赖和差异检查：
 
@@ -345,6 +373,8 @@ git push -u origin main
 | [economic_strategy.py](economic_strategy.py) | 有界资源记忆、一对一分配、环形侦察、路线进度与 runner 租约。 |
 | [strategy_policy.py](strategy_policy.py) | 有范围约束的 `StrategyProfile` 与 Beacon/经济 score 计算。 |
 | [adaptive_strategy.py](adaptive_strategy.py) | 脱敏遥测、规则指纹、双 LLM 协调器、金丝雀回滚与禁用模式。 |
+| [app](app) | FastAPI、Runtime、SQLite、策略模块、自适应安全层与 REST/WebSocket API。 |
+| [frontend](frontend) | 本地战术控制台、Canvas 地图及总览/策略/自适应/历史/设置页面。 |
 | [skills/arena-hero](skills/arena-hero) | 两个 LLM 每轮共同加载的项目内 v0.14 规则与 SDK 文档包。 |
 | [requirements.txt](requirements.txt) | Arena Hero Python SDK 版本约束。 |
 | [test_balanced_tactic.py](test_balanced_tactic.py) | 无需真实连接的行为测试。 |

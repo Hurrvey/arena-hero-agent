@@ -17,7 +17,7 @@ from adaptive_strategy import (
     load_dotenv,
     validate_evaluation,
 )
-from app.storage import AdaptiveRepository, RevisionConflict, StrategyRepository
+from app.storage import AdaptiveRepository, StrategyRepository
 from strategy_policy import StrategyProfile
 
 from .projection import bounded_records, project_record
@@ -186,7 +186,9 @@ class SqliteAdaptiveCoordinator:
     def _run_window(self, start_tick: int, end_tick: int, base_revision: int) -> None:
         records = self.repository.observations(start_tick=start_tick, end_tick=end_tick)
         score = score_window(records, start_tick=start_tick, end_tick=end_tick)
-        status = "EVALUATING" if score.sample_count >= self.minimum_samples else "INSUFFICIENT_SAMPLES"
+        status = (
+            "EVALUATING" if score.sample_count >= self.minimum_samples else "INSUFFICIENT_SAMPLES"
+        )
         window = self.repository.close_window(
             start_tick=start_tick,
             end_tick=end_tick,
@@ -219,14 +221,20 @@ class SqliteAdaptiveCoordinator:
                 self.transport.complete(
                     model=self.evaluator_model,
                     system=system,
-                    user="<UNTRUSTED_DATA>\n" + json.dumps(packet, sort_keys=True) + "\n</UNTRUSTED_DATA>",
+                    user="<UNTRUSTED_DATA>\n"
+                    + json.dumps(packet, sort_keys=True)
+                    + "\n</UNTRUSTED_DATA>",
                     timeout=30,
                 )
             ),
             skill_fingerprint=self.skill_bundle.fingerprint,
         )
         current = self.strategies.get(base_revision).profile
-        designer_packet = {"untrusted": True, "currentProfile": current.to_mapping(), "evaluation": evaluation}
+        designer_packet = {
+            "untrusted": True,
+            "currentProfile": current.to_mapping(),
+            "evaluation": evaluation,
+        }
         candidate, designer = _validate_designer(
             parse_json_object(
                 self.transport.complete(
@@ -235,7 +243,9 @@ class SqliteAdaptiveCoordinator:
                         self.skill_bundle.prompt_text
                         + "\nDesign a bounded profile that can hold the Beacon, monopolize resources, defend the Core, and counterattack. Return JSON only."
                     ),
-                    user="<UNTRUSTED_DATA>\n" + json.dumps(designer_packet, sort_keys=True) + "\n</UNTRUSTED_DATA>",
+                    user="<UNTRUSTED_DATA>\n"
+                    + json.dumps(designer_packet, sort_keys=True)
+                    + "\n</UNTRUSTED_DATA>",
                     timeout=30,
                 )
             ),
@@ -250,7 +260,11 @@ class SqliteAdaptiveCoordinator:
             designer_report=designer,
         )
         if self.auto_apply:
-            latest_defense = str((records[-1].get("defense") or {}).get("defense_level", "CLEAR")) if records else "CLEAR"
+            latest_defense = (
+                str((records[-1].get("defense") or {}).get("defense_level", "CLEAR"))
+                if records
+                else "CLEAR"
+            )
             self.apply_candidate(
                 candidate_id,
                 expected_revision=base_revision,
@@ -265,32 +279,28 @@ class SqliteAdaptiveCoordinator:
         current_defense: str,
     ) -> dict[str, object]:
         candidate = self.repository.candidate(candidate_id)
+        candidate_status = str(candidate["status"])
+        if candidate_status not in {"READY", "REVIEW_REQUIRED"}:
+            return {"applied": False, "reason": f"CANDIDATE_STATE_{candidate_status}"}
         if str(current_defense).upper() == "LETHAL":
             return {"applied": False, "reason": "LETHAL_RUNTIME_STATE"}
         if candidate["skillFingerprint"] != self.skill_bundle.fingerprint:
-            self.repository.mark_candidate(candidate_id, status="STALE")
+            self.repository.mark_candidate_if_reviewable(candidate_id, status="STALE")
             return {"applied": False, "reason": "SKILL_FINGERPRINT_CHANGED"}
         if candidate["sampleCount"] < self.minimum_samples:
             return {"applied": False, "reason": "INSUFFICIENT_SAMPLES"}
         if candidate["baseRevision"] != expected_revision:
-            self.repository.mark_candidate(candidate_id, status="STALE")
+            self.repository.mark_candidate_if_reviewable(candidate_id, status="STALE")
             return {"applied": False, "reason": "STRATEGY_REVISION_CHANGED"}
-        try:
-            revision = self.strategies.create_revision(
-                expected_revision=expected_revision,
-                profile=StrategyProfile.from_mapping(candidate["profile"]),
-                source="ADAPTIVE",
-                reason=f"adaptive candidate {candidate_id}",
-            )
-        except RevisionConflict:
-            self.repository.mark_candidate(candidate_id, status="STALE")
-            return {"applied": False, "reason": "STRATEGY_REVISION_CHANGED"}
-        self.repository.mark_candidate(
+        profile = StrategyProfile.from_mapping(candidate["profile"])
+        revision, status = self.repository.apply_candidate_revision(
             candidate_id,
-            status="PENDING_ACTIVATION",
-            candidate_revision=revision.revision,
+            expected_revision=expected_revision,
+            profile=profile.to_mapping(),
         )
-        return {"applied": True, "revision": revision.revision, "status": revision.status}
+        if revision is None:
+            return {"applied": False, "reason": status}
+        return {"applied": True, "revision": revision, "status": status}
 
     def wait_for_idle(self, timeout: float = 10) -> None:
         future = self._future
@@ -315,29 +325,25 @@ def apply_persisted_candidate(
     """Apply one audited candidate through the same fail-closed gates as auto-apply."""
 
     candidate = repository.candidate(candidate_id)
+    candidate_status = str(candidate["status"])
+    if candidate_status not in {"READY", "REVIEW_REQUIRED"}:
+        return {"applied": False, "reason": f"CANDIDATE_STATE_{candidate_status}"}
     if str(current_defense).upper() == "LETHAL":
         return {"applied": False, "reason": "LETHAL_RUNTIME_STATE"}
     if candidate["skillFingerprint"] != current_fingerprint:
-        repository.mark_candidate(candidate_id, status="STALE")
+        repository.mark_candidate_if_reviewable(candidate_id, status="STALE")
         return {"applied": False, "reason": "SKILL_FINGERPRINT_CHANGED"}
     if candidate["sampleCount"] < minimum_samples:
         return {"applied": False, "reason": "INSUFFICIENT_SAMPLES"}
     if candidate["baseRevision"] != expected_revision:
-        repository.mark_candidate(candidate_id, status="STALE")
+        repository.mark_candidate_if_reviewable(candidate_id, status="STALE")
         return {"applied": False, "reason": "STRATEGY_REVISION_CHANGED"}
-    try:
-        revision = strategies.create_revision(
-            expected_revision=expected_revision,
-            profile=StrategyProfile.from_mapping(candidate["profile"]),
-            source="ADAPTIVE",
-            reason=f"adaptive candidate {candidate_id}",
-        )
-    except RevisionConflict:
-        repository.mark_candidate(candidate_id, status="STALE")
-        return {"applied": False, "reason": "STRATEGY_REVISION_CHANGED"}
-    repository.mark_candidate(
+    profile = StrategyProfile.from_mapping(candidate["profile"])
+    revision, status = repository.apply_candidate_revision(
         candidate_id,
-        status="PENDING_ACTIVATION",
-        candidate_revision=revision.revision,
+        expected_revision=expected_revision,
+        profile=profile.to_mapping(),
     )
-    return {"applied": True, "revision": revision.revision, "status": revision.status}
+    if revision is None:
+        return {"applied": False, "reason": status}
+    return {"applied": True, "revision": revision, "status": status}

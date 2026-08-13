@@ -27,6 +27,7 @@ def live_server_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         static_directory=PROJECT_ROOT / "frontend",
         asset_directory=PROJECT_ROOT / "arena-hero-ui-assets",
         dotenv_path=data_dir / "missing.env",
+        legacy_adaptive_directory=data_dir / "missing-adaptive",
     )
     application = create_app(settings)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:

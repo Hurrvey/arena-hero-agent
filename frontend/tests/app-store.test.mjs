@@ -8,11 +8,27 @@ test("duplicate seq is ignored and a gap requests replay", () => {
   const seen = [];
   store.subscribe((state) => seen.push(state.lastSeq));
 
-  assert.equal(store.applyEvent({ seq: 1, eventType: "one" }), true);
-  assert.equal(store.applyEvent({ seq: 1, eventType: "duplicate" }), false);
-  assert.equal(store.applyEvent({ seq: 3, eventType: "gap" }), false);
+  assert.equal(store.applyEvent({ seq: 1, type: "one" }), true);
+  assert.equal(store.applyEvent({ seq: 1, type: "duplicate" }), false);
+  assert.equal(store.applyEvent({ seq: 3, type: "gap" }), false);
   assert.equal(store.snapshot.connection.needsReplay, true);
   assert.deepEqual(seen, [1, 1]);
+});
+
+test("canonical business event type advances the event stream", () => {
+  const store = new AppStore();
+  const event = {
+    schemaVersion: 1,
+    seq: 1,
+    type: "plan.accepted",
+    at: "2026-08-13T00:00:00Z",
+    runtimeId: "runtime",
+    tick: 1,
+    payload: {},
+  };
+
+  assert.equal(store.applyEvent(event), true);
+  assert.equal(store.snapshot.events[0].type, "plan.accepted");
 });
 
 test("EVENT_GAP replaces state from authoritative REST", () => {

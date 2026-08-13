@@ -43,7 +43,7 @@ def redact_public_payload(value: Any, mapper: PublicIdMapper) -> Any:
             if name in _SECRET_KEYS or "token" in name or "secret" in name:
                 continue
             public_key = _camel(str(key))
-            if name == "id" or name.endswith("_id"):
+            if (name == "id" or name.endswith("_id")) and item is not None:
                 result[public_key] = mapper.short(item)
             else:
                 result[public_key] = redact_public_payload(item, mapper)

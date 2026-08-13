@@ -7,6 +7,7 @@ from threading import RLock
 
 from adaptive_strategy import DisabledAdaptiveCoordinator, SkillBundleError, load_dotenv
 from app.adaptive import SqliteAdaptiveCoordinator
+from app.api.event_schema import service_event_envelope
 from app.errors import AppError
 from app.observability.redaction import PublicIdMapper
 from app.storage import AdaptiveRepository, MetricsRepository, RuntimeStore, StrategyRepository
@@ -16,7 +17,13 @@ from .agent_runtime import AgentRuntime
 from .client import sdk_client_factory
 from .models import RuntimeBatch
 from .runtime_manager import RuntimeManager
-from .serialization import json_value, serialize_turn
+from .serialization import (
+    json_value,
+    serialize_public_explanation,
+    serialize_public_plan,
+    serialize_resolution_events,
+    serialize_turn,
+)
 
 
 class RuntimeServicesFactory:
@@ -90,17 +97,50 @@ class RuntimeServicesFactory:
         if session_id is None or mapper is None:
             return
         if batch.kind == "RECEIPT":
-            event = self.runtime_store.append_service_event(
-                session_id=session_id,
-                tick=batch.tick,
-                event_type="plan.received",
-                payload={"source": batch.source or "UNKNOWN"},
+            receipt = batch.receipt
+            public_receipt = {
+                "accepted": bool(getattr(receipt, "accepted", True)),
+                "source": batch.source or "UNKNOWN",
+            }
+            received_at = getattr(receipt, "received_at", None)
+            if received_at is not None:
+                public_receipt["receivedAt"] = str(received_at)
+            raw_received_plan = json_value(getattr(receipt, "plan", None))
+            public_received_plan = (
+                serialize_public_plan(raw_received_plan, mapper)
+                if isinstance(raw_received_plan, dict)
+                else None
             )
-            self.broadcaster.publish_committed(_service_event(event))
+            event = self.runtime_store.save_receipt(
+                session_id=session_id,
+                tick=int(batch.tick or 0),
+                receipt=public_receipt,
+                raw_plan=raw_received_plan if isinstance(raw_received_plan, dict) else None,
+                public_plan=public_received_plan,
+            )
+            self.broadcaster.publish_committed(service_event_envelope(event))
             return
         if batch.turn is None:
             return
         raw_state, public_state = serialize_turn(batch.turn, mapper)
+        resolution_events = serialize_resolution_events(batch.turn, mapper)
+        previous_tick = max(0, int(batch.tick or 0) - 1)
+        state_service = ("state.snapshot", {"paused": batch.result is None})
+        resolution_service = (
+            (
+                (
+                    "resolution.results",
+                    {
+                        "count": len(resolution_events),
+                        "planTicks": sorted(
+                            {int(event["plan_tick"]) for event in resolution_events}
+                        ),
+                    },
+                ),
+            )
+            if resolution_events
+            else ()
+        )
         if batch.result is None:
             events = self.runtime_store.save_turn_batch(
                 session_id=session_id,
@@ -110,13 +150,14 @@ class RuntimeServicesFactory:
                 raw_plan={},
                 public_plan={},
                 explanation={},
-                resolution_events=(),
-                service_events=(("turn.observed", {"paused": True}),),
+                resolution_events=resolution_events,
+                service_events=(state_service, *resolution_service),
                 plan_status="DRAFT",
+                resolve_plan_tick=previous_tick,
             )
         else:
-            public_result = batch.result.public_mapping()
             raw_plan = json_value(batch.result.plan)
+            raw_plan_mapping = raw_plan if isinstance(raw_plan, dict) else {"plan": raw_plan}
             public_state["defenseLevel"] = str(
                 batch.result.diagnostics.defense.get("level", "CLEAR")
             ).upper()
@@ -125,16 +166,21 @@ class RuntimeServicesFactory:
                 tick=int(batch.tick or 0),
                 raw_snapshot=raw_state,
                 public_snapshot=public_state,
-                raw_plan=raw_plan if isinstance(raw_plan, dict) else {"plan": raw_plan},
-                public_plan=public_result["plan"],
-                explanation={"actions": public_result["explanation"]},
-                resolution_events=(),
-                service_events=(("plan.accepted", {"source": batch.source or "AGENT"}),),
+                raw_plan=raw_plan_mapping,
+                public_plan=serialize_public_plan(raw_plan_mapping, mapper),
+                explanation=serialize_public_explanation(batch.result.explanation, mapper),
+                resolution_events=resolution_events,
+                service_events=(
+                    state_service,
+                    ("plan.accepted", {"source": batch.source or "AGENT"}),
+                    *resolution_service,
+                ),
                 strategy_revision=self.strategies.current().revision,
                 plan_status="ACCEPTED",
+                resolve_plan_tick=previous_tick,
             )
         for event in events:
-            self.broadcaster.publish_committed(_service_event(event))
+            self.broadcaster.publish_committed(service_event_envelope(event))
         self.metrics.save(
             session_id,
             int(batch.tick or 0),
@@ -163,9 +209,7 @@ class RuntimeServicesFactory:
             coordinator.close()
 
 
-def build_runtime_manager(
-    *, settings, runtime_store, strategies, metrics, adaptive, broadcaster
-):
+def build_runtime_manager(*, settings, runtime_store, strategies, metrics, adaptive, broadcaster):
     factory = RuntimeServicesFactory(
         settings=settings,
         runtime_store=runtime_store,
@@ -175,18 +219,6 @@ def build_runtime_manager(
         broadcaster=broadcaster,
     )
     return RuntimeManager(factory.build), factory
-
-
-def _service_event(event) -> dict[str, object]:
-    return {
-        "type": "event",
-        "seq": event.seq,
-        "sessionId": event.session_id,
-        "tick": event.tick,
-        "eventType": event.event_type,
-        "payload": event.payload,
-        "createdAt": event.created_at,
-    }
 
 
 def _metric_values(state: dict[str, object]) -> dict[str, float]:

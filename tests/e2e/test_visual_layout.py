@@ -35,3 +35,19 @@ def test_dashboard_has_no_page_level_horizontal_overflow(
     output = Path(PROJECT_ROOT, "test-results", "dashboard")
     output.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=output / f"overview-{width}.png", full_page=True)
+
+
+def test_mobile_navigation_keeps_all_five_pages_reachable(
+    page: Page,
+    live_server_url: str,
+) -> None:
+    install_api_mocks(page)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(live_server_url + "/")
+
+    navigation = page.get_by_role("navigation", name="主导航")
+    expect(navigation).to_be_visible()
+    expect(navigation.get_by_role("link")).to_have_count(5)
+    navigation.get_by_role("link", name="策略", exact=True).click()
+
+    expect(page.get_by_role("heading", name="策略控制台", exact=True)).to_be_visible()

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ def settings(tmp_path: Path) -> Settings:
         static_directory=tmp_path / "frontend",
         asset_directory=tmp_path / "assets",
         dotenv_path=tmp_path / "missing.env",
+        legacy_adaptive_directory=tmp_path / "missing-adaptive",
     )
 
 
@@ -100,3 +102,38 @@ def test_all_errors_have_code_message_request_id_and_details(tmp_path) -> None:
         response = client.get("/api/v1/state/current")
 
     assert set(response.json()) == {"code", "message", "requestId", "details"}
+
+
+def test_events_tail_rebases_to_the_latest_bounded_window(tmp_path) -> None:
+    with TestClient(create_app(settings(tmp_path))) as client:
+        store = client.app.state.services.runtime_store
+        session = store.create_session(account_hash="tail-test")
+        created_at = "2026-08-13T00:00:00+00:00"
+        with store.database.connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO service_events(
+                    session_id, tick, event_type, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        session.session_id,
+                        tick,
+                        "state.snapshot",
+                        json.dumps({"tick": tick}),
+                        created_at,
+                    )
+                    for tick in range(1, 1401)
+                ),
+            )
+            connection.commit()
+
+        response = client.get("/api/v1/events?tail=true&limit=300")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["events"]) == 300
+    assert payload["events"][0]["seq"] == 1101
+    assert payload["events"][-1]["seq"] == 1400
+    assert payload["lastSeq"] == 1400

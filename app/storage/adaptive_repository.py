@@ -174,6 +174,7 @@ class AdaptiveRepository:
                 """
                 SELECT c.candidate_id, c.cycle_id, c.base_revision, c.profile_json,
                        c.evaluator_report_json, c.response_hash, c.status, c.created_at,
+                       w.candidate_revision,
                        w.skill_fingerprint, w.sample_count, w.start_tick, w.end_tick,
                        w.raw_score, w.normalized_score
                 FROM adaptive_candidates AS c
@@ -192,19 +193,24 @@ class AdaptiveRepository:
                 "responseHash": str(row[5]),
                 "status": str(row[6]),
                 "createdAt": str(row[7]),
-                "skillFingerprint": str(row[8]),
-                "sampleCount": int(row[9]),
-                "startTick": int(row[10]),
-                "endTick": int(row[11]),
-                "rawScore": float(row[12]),
-                "scorePerTick": float(row[13]),
+                "candidateRevision": int(row[8]) if row[8] is not None else None,
+                "skillFingerprint": str(row[9]),
+                "sampleCount": int(row[10]),
+                "startTick": int(row[11]),
+                "endTick": int(row[12]),
+                "rawScore": float(row[13]),
+                "scorePerTick": float(row[14]),
             }
             for row in rows
         ]
 
     def candidate(self, candidate_id: str) -> dict[str, object]:
         match = next(
-            (candidate for candidate in self.candidates(limit=500) if candidate["candidateId"] == candidate_id),
+            (
+                candidate
+                for candidate in self.candidates(limit=500)
+                if candidate["candidateId"] == candidate_id
+            ),
             None,
         )
         if match is None:
@@ -237,3 +243,156 @@ class AdaptiveRepository:
                 (status, candidate_revision, row[0]),
             )
             connection.commit()
+
+    def mark_candidate_if_reviewable(self, candidate_id: str, *, status: str) -> bool:
+        """Update lifecycle only while no apply transaction has committed."""
+
+        with self.database.connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    """
+                    UPDATE adaptive_candidates
+                    SET status = ?
+                    WHERE candidate_id = ? AND status IN ('READY', 'REVIEW_REQUIRED', 'STALE')
+                      AND EXISTS (
+                          SELECT 1 FROM adaptive_cycles AS w
+                          WHERE w.cycle_id = adaptive_candidates.cycle_id
+                            AND w.candidate_revision IS NULL
+                      )
+                    """,
+                    (status, candidate_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    """
+                    UPDATE adaptive_cycles
+                    SET status = ?
+                    WHERE cycle_id = (
+                        SELECT cycle_id FROM adaptive_candidates WHERE candidate_id = ?
+                    ) AND candidate_revision IS NULL
+                    """,
+                    (status, candidate_id),
+                )
+                connection.commit()
+                return True
+            except Exception:
+                connection.rollback()
+                raise
+
+    def reject_candidate(self, candidate_id: str) -> bool:
+        """Reject only a candidate that has not created a strategy revision."""
+
+        allowed = ("READY", "REVIEW_REQUIRED", "STALE")
+        with self.database.connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT c.cycle_id, c.status, w.candidate_revision
+                    FROM adaptive_candidates AS c
+                    JOIN adaptive_cycles AS w ON w.cycle_id = c.cycle_id
+                    WHERE c.candidate_id = ?
+                    """,
+                    (candidate_id,),
+                ).fetchone()
+                if row is None:
+                    raise LookupError("adaptive candidate was not found")
+                if str(row[1]) not in allowed or row[2] is not None:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    "UPDATE adaptive_candidates SET status = 'REJECTED' WHERE candidate_id = ?",
+                    (candidate_id,),
+                )
+                connection.execute(
+                    "UPDATE adaptive_cycles SET status = 'REJECTED' WHERE cycle_id = ?",
+                    (row[0],),
+                )
+                connection.commit()
+                return True
+            except Exception:
+                connection.rollback()
+                raise
+
+    def apply_candidate_revision(
+        self,
+        candidate_id: str,
+        *,
+        expected_revision: int,
+        profile: dict[str, object],
+    ) -> tuple[int | None, str]:
+        """Atomically bind a candidate to its immutable pending strategy revision."""
+
+        with self.database.connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                candidate = connection.execute(
+                    """
+                    SELECT c.status, c.cycle_id, w.candidate_revision
+                    FROM adaptive_candidates AS c
+                    JOIN adaptive_cycles AS w ON w.cycle_id = c.cycle_id
+                    WHERE c.candidate_id = ?
+                    """,
+                    (candidate_id,),
+                ).fetchone()
+                if candidate is None:
+                    raise LookupError("adaptive candidate was not found")
+                status = str(candidate[0])
+                if status == "PENDING_ACTIVATION" and candidate[2] is not None:
+                    connection.rollback()
+                    return int(candidate[2]), "PENDING_ACTIVATION"
+                if status not in {"READY", "REVIEW_REQUIRED"}:
+                    connection.rollback()
+                    return None, f"CANDIDATE_STATE_{status}"
+                active = connection.execute(
+                    "SELECT revision FROM strategy_profiles WHERE status = 'ACTIVE'"
+                ).fetchone()
+                pending = connection.execute(
+                    "SELECT revision FROM strategy_profiles WHERE status = 'PENDING'"
+                ).fetchone()
+                if active is None or int(active[0]) != expected_revision or pending is not None:
+                    connection.execute(
+                        "UPDATE adaptive_candidates SET status = 'STALE' WHERE candidate_id = ?",
+                        (candidate_id,),
+                    )
+                    connection.execute(
+                        "UPDATE adaptive_cycles SET status = 'STALE' WHERE cycle_id = ?",
+                        (candidate[1],),
+                    )
+                    connection.commit()
+                    return None, "STRATEGY_REVISION_CHANGED"
+                cursor = connection.execute(
+                    """
+                    INSERT INTO strategy_profiles(
+                        source, parent_revision, profile_json, reason,
+                        activated_tick, status, created_at
+                    ) VALUES ('ADAPTIVE', ?, ?, ?, NULL, 'PENDING', ?)
+                    """,
+                    (
+                        expected_revision,
+                        json.dumps(profile, sort_keys=True, separators=(",", ":")),
+                        f"adaptive candidate {candidate_id}",
+                        utc_now(),
+                    ),
+                )
+                revision = int(cursor.lastrowid)
+                connection.execute(
+                    "UPDATE adaptive_candidates SET status = 'PENDING_ACTIVATION' WHERE candidate_id = ?",
+                    (candidate_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE adaptive_cycles
+                    SET status = 'PENDING_ACTIVATION', candidate_revision = ?
+                    WHERE cycle_id = ?
+                    """,
+                    (revision, candidate[1]),
+                )
+                connection.commit()
+                return revision, "PENDING_ACTIVATION"
+            except Exception:
+                connection.rollback()
+                raise

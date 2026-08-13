@@ -2,7 +2,7 @@
 
 面向 [Arena Hero](https://app.arenahero.io/arena) 的可解释、可测试、可持续运行的自动化战术 Agent。
 
-当前 `v1.0.0` 已实现确定性 Python 战术引擎、Core 动态防御、Worker 经济、Beacon 任务和受约束的双 LLM 自适应调参；下一阶段是在不改变战术核心的前提下，增加 FastAPI 服务层、实时 Web 控制台、可靠的运行态存储与并发保护。
+当前 `v1.1.0` 已实现确定性 Python 战术、FastAPI 本地服务、SQLite 权威历史、实时 Web 控制台、全局移动解析、账户锁和 SQLite 固定窗口双 LLM 自适应。本文件同时保留原始整改背景与最终实现约束。
 
 > 文档基线：仓库提交 [`f62b586`](https://github.com/Hurrvey/arena-hero-agent/commit/f62b586ea0addf89fa570134b22a11d44c684b58)，Arena Hero 规则包 `v0.14`，官方 Python SDK `0.2.9`。
 
@@ -65,18 +65,18 @@
 | Core 动态防御 | 已实现 | `CLEAR/WATCH/APPROACH/ATTACK/LETHAL` 五级威胁模型。 |
 | Beacon runner/carrier | 已实现 | 有启动规模、距离、租约、停滞和冷却约束。 |
 | 双 LLM 自适应调参 | 已实现，需加固 | evaluator/designer、规则指纹、候选校验和回滚已经存在。 |
-| 自动化测试 | 已实现 | 审查基线下 `172 passed`。 |
-| FastAPI 服务层 | 未实现 | 当前程序仍是 CLI tactic runner，不是前端可调用的后端服务。 |
-| 实时 Web 控制台 | 未实现 | 当前只有终端 `tick/accepted` 输出。 |
-| 统一事件存储 | 未实现 | 运行历史目前依赖自适应模式下的 JSON/JSONL 文件。 |
-| 全局移动冲突解析 | 未实现 | 尚未验证友军占位者一定能在同 Tick 成功离开。 |
-| 多实例账户锁 | 未实现 | 同一账户运行多个实例时可能互相覆盖 AGENT 计划。 |
+| 自动化测试 | 已实现 | 运行 `python -m pytest -q` 获取当前精确数量；包含 10,000 Tick 长跑和真实浏览器测试。 |
+| FastAPI 服务层 | 已实现 | loopback REST/WebSocket、状态机、安全头和脱敏错误 envelope。 |
+| 实时 Web 控制台 | 已实现 | 总览、Canvas 地图、策略、自适应、历史和设置五个页面。 |
+| 统一事件存储 | 已实现 | SQLite 保存 Turn、计划、事件、指标、revision、窗口和候选。 |
+| 全局移动冲突解析 | 已实现 | 容量、离开依赖、交换/环、目标冲突和确定性降级均有测试。 |
+| 多实例账户锁 | 已实现 | CLI/Web 使用相同账户哈希和跨进程锁。 |
 
 ### 已验证基线
 
 ```text
 Python compileall     PASS
-pytest                172 passed
+pytest                运行当前测试集获取精确数量
 pip check             PASS
 git diff --check      PASS
 Secret scan           未发现真实凭据
@@ -1042,7 +1042,7 @@ arena-hero-agent/
 
 ## 安装与运行
 
-### 当前 CLI 版本
+### 推荐安装与 Web 运行
 
 要求：
 
@@ -1059,21 +1059,19 @@ python -m venv .venv
 PowerShell：
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+uv sync --python 3.11 --group dev
 Copy-Item .env.example .env
 notepad .env
-python .\balanced_tactic.py
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 macOS/Linux：
 
 ```bash
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+uv sync --python 3.11 --group dev
 cp .env.example .env
 ${EDITOR:-vi} .env
-python balanced_tactic.py
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 最小配置：
@@ -1107,26 +1105,24 @@ tick=123 accepted=True
 
 `accepted=True` 只代表服务接受计划。行动是否移动、命中、采集、生产或失败，需要读取下一 Turn 的事件。
 
-### 目标 Web 服务
-
-完成服务化里程碑后，开发命令应为：
+访问 `http://127.0.0.1:8000`。服务无 key 也能启动并展示本地 UI；点击启动 Agent 时才读取 `.env`。CLI 兼容入口仍是：
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m alembic upgrade head
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+\.venv\Scripts\python.exe .\balanced_tactic.py
 ```
 
-然后访问 `http://127.0.0.1:8000`。这些命令属于目标结构，当前 `v1.0.0` 尚未提供 `app.main`。
+CLI 与 Web 共享账户锁，不得同时控制同一 Arena Hero 账号。暂停继续保存快照但不提交计划；恢复后不补交旧 Tick。`accepted` 仅表示服务接收，下一 Turn 的事件才表示 resolved 结果。
 
 ## 测试与质量门禁
 
-### 当前测试
+### 当前测试与发布门禁
 
 ```bash
-python -m pip install pytest
-python -m pytest -q
-python -m pip check
+.\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\ruff.exe check app tests
+.\.venv\Scripts\bandit.exe -q -r app
+.\.venv\Scripts\python.exe -m pip check
 git diff --check
 ```
 
@@ -1181,7 +1177,7 @@ Pull Request 至少执行：
 - 前端静态检查和 API schema contract test。
 - README 相对链接和 Mermaid/JSON 示例检查。
 
-发布只从受保护的 tag 构建，不在 CI 日志打印 secret。
+CI 会对 Git 历史执行 Gitleaks，并只接受 `v主版本.次版本.补丁版本` 形状的发布 tag。GitHub 仓库还应在 Settings 中把该 tag 规则设为受保护；工作流不在日志打印 secret。
 
 ## 部署与运维
 
@@ -1258,49 +1254,49 @@ HTTPS 反向代理 → FastAPI 实例 → Postgres
 
 ### M0：正确性修复
 
-- [ ] 目的地威胁进入路径评分，新增 Worker 火线回归测试。
-- [ ] 实现移动意图、占位依赖和冲突解析器。
-- [ ] 使用真实视野掩码清理资源记忆。
-- [ ] 增加人口/容量投影和 overflow score 惩罚。
-- [ ] 自适应与自动应用默认关闭。
+- [x] 目的地威胁进入路径评分，新增 Worker 火线回归测试。
+- [x] 实现移动意图、占位依赖和冲突解析器。
+- [x] 使用真实视野掩码清理资源记忆。
+- [x] 增加人口/容量投影和 overflow score 惩罚。
+- [x] 自适应与自动应用默认关闭。
 
 完成标准：四类 P0 场景全部有失败复现和通过的回归测试。
 
 ### M1：策略核心拆分
 
-- [ ] 建立 `app/strategy` 纯模型和 planner 接口。
-- [ ] 拆分 movement/visibility/economy/beacon/defense/combat/production。
-- [ ] 保持现有 CLI 入口兼容。
-- [ ] 引入 `pyproject.toml`、锁文件、Ruff、Bandit 和 CI。
+- [x] 建立 `app/strategy` 纯模型和 planner 接口。
+- [x] 拆分 movement/visibility/economy/beacon/defense/combat/production。
+- [x] 保持现有 CLI 入口兼容。
+- [x] 引入 `pyproject.toml`、锁文件、Ruff、Bandit 和 CI。
 
 完成标准：现有测试全部通过，CLI 行为保持兼容，策略模块不依赖 FastAPI。
 
 ### M2：FastAPI Runtime
 
-- [ ] 实现 RuntimeManager、AgentRuntime 和状态机。
-- [ ] 切换到 `game.events()`，记录 Tick/Turn/Received。
-- [ ] 实现 SQLite store、迁移和账户锁。
-- [ ] 完成 agent/state/plan/events/health API。
-- [ ] 实现 WebSocket 信封、seq 和断线补流。
+- [x] 实现 RuntimeManager、AgentRuntime 和状态机。
+- [x] 切换到 `game.events()`，记录 Tick/Turn/Received。
+- [x] 实现 SQLite store、迁移和账户锁。
+- [x] 完成 agent/state/plan/events/health API。
+- [x] 实现 WebSocket 信封、seq 和断线补流。
 
 完成标准：模拟 SDK 流下可启动、暂停、恢复、停止；一个 Turn 只提交一次；前端可重连恢复。
 
 ### M3：Web 控制台
 
-- [ ] 完成统计卡、地图 Canvas、当前计划和实时事件。
-- [ ] 完成单位筛选、详情、加载/空/错误/重连状态。
-- [ ] 完成策略编辑、revision 冲突处理和差异预览。
-- [ ] 完成历史指标页面。
+- [x] 完成统计卡、地图 Canvas、当前计划和实时事件。
+- [x] 完成单位筛选、详情、加载/空/错误/重连状态。
+- [x] 完成策略编辑、revision 冲突处理和差异预览。
+- [x] 完成历史指标页面。
 
 完成标准：用户不看终端也能判断连接、计划、风险和上一 Tick 结果。
 
 ### M4：自适应加固
 
-- [ ] SQLite/Postgres 固定窗口与 cursor 事务。
-- [ ] score/tick、overflow 惩罚和最低样本量。
-- [ ] Raw/LLM projection 分离与保留策略。
-- [ ] Base URL allowlist 和 SSRF 防护。
-- [ ] 候选人工审阅、CAS 应用和可审计回滚。
+- [x] SQLite 固定窗口与 cursor 事务（Postgres 保留到 M5）。
+- [x] score/tick、overflow 惩罚和最低样本量。
+- [x] Raw/LLM projection 分离与保留策略。
+- [x] Base URL allowlist 和 SSRF 防护。
+- [x] 候选人工审阅、CAS 应用和可审计回滚。
 
 完成标准：重启不重复窗口；LLM 故障不影响提交；未经验证的候选不会自动生效。
 

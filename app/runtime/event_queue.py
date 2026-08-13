@@ -45,3 +45,7 @@ class RuntimeEventQueue:
                     raise TimeoutError("runtime queue is empty")
                 self._condition.wait(remaining)
             return self._items.popleft()[1]
+
+    def qsize(self) -> int:
+        with self._condition:
+            return len(self._items)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from inspect import signature
 from threading import Event, RLock, Thread, current_thread
 from uuid import uuid4
@@ -47,8 +48,11 @@ class AgentRuntime:
         self._stop_requested = Event()
         self._thread: Thread | None = None
         self._client = None
-        self._submitted_ticks: set[int] = set()
-        self._observed_while_paused: set[int] = set()
+        self._recent_ticks: set[int] = set()
+        self._recent_tick_order: deque[int] = deque()
+        self._submitted_count = 0
+        self._highest_submitted_tick = -1
+        self._paused_tick: int | None = None
         self._last_tick: int | None = None
         self._error_code: str | None = None
         self._error_message: str | None = None
@@ -61,8 +65,20 @@ class AgentRuntime:
                 self._last_tick,
                 self._error_code,
                 self._error_message,
-                len(self._submitted_ticks),
+                self._submitted_count,
             )
+
+    @property
+    def dedupe_window_size(self) -> int:
+        return len(self._recent_ticks)
+
+    def _remember_tick(self, tick: int) -> None:
+        if tick in self._recent_ticks:
+            return
+        self._recent_ticks.add(tick)
+        self._recent_tick_order.append(tick)
+        while len(self._recent_tick_order) > 2048:
+            self._recent_ticks.discard(self._recent_tick_order.popleft())
 
     def _set_status(self, status: RuntimeStatus) -> RuntimeSnapshot:
         with self._status_lock:
@@ -187,13 +203,14 @@ class AgentRuntime:
     def _handle_turn(self, turn: object) -> None:
         tick = int(turn.tick)
         self._last_tick = tick
-        if tick in self._submitted_ticks:
+        if tick in self._recent_ticks or tick <= self._highest_submitted_tick:
             return
         if self._pause_requested.is_set() or self._status is RuntimeStatus.PAUSED:
-            self._observed_while_paused.add(tick)
+            self._paused_tick = tick
+            self._remember_tick(tick)
             self._persistence(RuntimeBatch("SNAPSHOT_ONLY", tick, turn=turn))
             return
-        if tick in self._observed_while_paused:
+        if tick == self._paused_tick:
             return
         provider = self._profile_provider
         if signature(provider).parameters:
@@ -202,7 +219,9 @@ class AgentRuntime:
             profile = provider()
         result = self._planner(turn, self._memory, profile)
         receipt = turn.submit()
-        self._submitted_ticks.add(tick)
+        self._remember_tick(tick)
+        self._submitted_count += 1
+        self._highest_submitted_tick = max(self._highest_submitted_tick, tick)
         batch = RuntimeBatch("TURN_SUBMITTED", tick, turn, result, receipt, "AGENT")
         self._queue.put_critical(batch)
         self._persistence(batch)

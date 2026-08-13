@@ -28,16 +28,20 @@ export class ApiClient {
   state() { return this.request("/state/current"); }
   plan() { return this.request("/plan/current"); }
   events(afterSeq = 0) { return this.request(`/events?afterSeq=${afterSeq}&limit=300`); }
+  eventsTail() { return this.request("/events?tail=true&limit=300"); }
   metrics() { return this.request("/metrics/summary"); }
   metricSeries() { return this.request("/metrics/series"); }
   strategy() { return this.request("/strategy"); }
   strategySchema() { return this.request("/strategy/schema"); }
+  strategyHistory() { return this.request("/strategy/history"); }
   adaptive() { return this.request("/adaptive/status"); }
   adaptiveReports() { return this.request("/adaptive/reports"); }
   settings() { return this.request("/settings"); }
   historyTick(tick) { return this.request(`/history/${encodeURIComponent(tick)}`); }
+  decideCandidate(candidateId, payload) { return this.request(`/adaptive/candidates/${encodeURIComponent(candidateId)}`, { method:"POST", body:JSON.stringify(payload) }); }
   control(action) { return this.request(`/agent/${action}`, { method: "POST" }); }
   saveStrategy(payload) {
     return this.request("/strategy", { method: "PUT", body: JSON.stringify(payload) });
   }
+  rollbackStrategy(payload) { return this.request("/strategy/rollback", { method:"POST", body:JSON.stringify(payload) }); }
 }

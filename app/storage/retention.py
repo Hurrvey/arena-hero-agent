@@ -20,8 +20,32 @@ class RetentionService:
             connection.execute("BEGIN IMMEDIATE")
             raw = connection.execute(
                 """
-                DELETE FROM turn_snapshots WHERE rowid IN (
-                    SELECT rowid FROM turn_snapshots WHERE received_at < ? LIMIT ?
+                UPDATE turn_snapshots SET raw_payload_json = '{}'
+                WHERE rowid IN (
+                    SELECT rowid FROM turn_snapshots
+                    WHERE received_at < ? AND raw_payload_json != '{}' LIMIT ?
+                )
+                """,
+                (raw_cutoff, batch),
+            ).rowcount
+            raw_plans = connection.execute(
+                """
+                UPDATE plans SET raw_plan_json = '{}'
+                WHERE rowid IN (
+                    SELECT plans.rowid FROM plans
+                    JOIN turn_snapshots USING (session_id, tick)
+                    WHERE turn_snapshots.received_at < ? AND plans.raw_plan_json != '{}'
+                    LIMIT ?
+                )
+                """,
+                (raw_cutoff, batch),
+            ).rowcount
+            raw_receipts = connection.execute(
+                """
+                UPDATE plan_receipts SET raw_plan_json = '{}'
+                WHERE rowid IN (
+                    SELECT rowid FROM plan_receipts
+                    WHERE received_at < ? AND raw_plan_json != '{}' LIMIT ?
                 )
                 """,
                 (raw_cutoff, batch),
@@ -34,5 +58,23 @@ class RetentionService:
                 """,
                 (event_cutoff, batch),
             ).rowcount
+            resolutions = connection.execute(
+                """
+                DELETE FROM resolution_events WHERE id IN (
+                    SELECT id FROM resolution_events WHERE created_at < ? LIMIT ?
+                )
+                """,
+                (event_cutoff, batch),
+            ).rowcount
             connection.commit()
-        return raw + events
+        return raw + raw_plans + raw_receipts + events + resolutions
+
+    def prune_all(self, *, raw_days: int = 7, event_days: int = 30, batch: int = 500) -> int:
+        """Drain expired rows through repeated short transactions at startup."""
+
+        total = 0
+        while True:
+            deleted = self.prune(raw_days=raw_days, event_days=event_days, batch=batch)
+            total += deleted
+            if deleted == 0:
+                return total

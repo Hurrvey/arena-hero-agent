@@ -89,3 +89,6 @@
 .settings-list dt { color:var(--muted); }
 .settings-list dd { margin:0; font-family:var(--mono); text-align:right; }
 .settings-warning { margin:14px 16px 18px; padding:12px; color:var(--warning); background:rgba(255,184,62,.06); border-left:2px solid var(--warning); font-size:12px; }
+.strategy-history { margin-top:14px; }
+.revision-list { padding:8px 14px; }
+.revision-list > div { display:grid; grid-template-columns:90px 1fr auto; align-items:center; gap:12px; min-height:48px; border-bottom:1px solid rgba(35,56,77,.5); }

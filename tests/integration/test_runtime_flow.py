@@ -1,6 +1,9 @@
 import threading
 import time
+from datetime import UTC, datetime
 from types import SimpleNamespace
+
+from arena_hero import CommandPlan, CommandSource, Received
 
 from app.runtime.agent_runtime import AgentRuntime
 from app.runtime.event_queue import RuntimeEventQueue
@@ -64,6 +67,24 @@ def test_agent_and_manual_received_are_both_persisted_with_source(tmp_path) -> N
     agent.join(timeout=3)
 
     assert [batch.source for batch in persisted] == ["AGENT", "MANUAL"]
+
+
+def test_official_sdk_received_event_is_classified_and_persisted(tmp_path) -> None:
+    persisted = []
+    receipt = Received(
+        tick=2,
+        source=CommandSource.AGENT,
+        received_at=datetime.now(UTC),
+        plan=CommandPlan(tick=2),
+    )
+    agent, _client, _ = make_runtime(tmp_path, (receipt,), persistence=persisted.append)
+
+    agent.start()
+    agent.join(timeout=3)
+
+    assert len(persisted) == 1
+    assert persisted[0].kind == "RECEIPT"
+    assert persisted[0].source == "AGENT"
 
 
 def test_submit_precedes_slow_persistence_and_adaptive_observation(tmp_path) -> None:

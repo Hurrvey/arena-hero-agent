@@ -15,7 +15,8 @@ def settings(request: Request) -> dict[str, object]:
     provider = os.environ.get("ARENA_HERO_LLM_BASE_URL", "https://api.openai.com/v1")
     hostname = urlsplit(provider).hostname or "未配置"
     return {
-        "retentionDays": 14,
+        "rawRetentionDays": 7,
+        "eventRetentionDays": 30,
         "logLevel": "INFO",
         "providerConfigured": bool(os.environ.get("ARENA_HERO_LLM_API_KEY")),
         "providerHost": hostname,

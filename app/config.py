@@ -16,6 +16,7 @@ class Settings:
     static_directory: Path = PROJECT_ROOT / "frontend"
     asset_directory: Path = PROJECT_ROOT / "arena-hero-ui-assets"
     dotenv_path: Path = PROJECT_ROOT / ".env"
+    legacy_adaptive_directory: Path = PROJECT_ROOT / "adaptive"
     websocket_replay_limit: int = 1000
     websocket_client_queue: int = 256
     host: str = "127.0.0.1"
@@ -28,6 +29,7 @@ class Settings:
             "static_directory",
             "asset_directory",
             "dotenv_path",
+            "legacy_adaptive_directory",
         ):
             object.__setattr__(self, name, Path(getattr(self, name)).resolve())
         if not 1 <= self.websocket_replay_limit <= 1000:

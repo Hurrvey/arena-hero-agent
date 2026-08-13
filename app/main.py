@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 from contextlib import asynccontextmanager
 from uuid import uuid4
@@ -13,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from strategy_policy import StrategyProfile
 
+from .adaptive.legacy_import import LegacyImporter
 from .api import adaptive, agent, metrics, state, strategy, websocket
 from .api import settings as settings_api
 from .api.dependencies import Services
@@ -25,9 +27,12 @@ from .storage import (
     AdaptiveRepository,
     Database,
     MetricsRepository,
+    RetentionService,
     RuntimeStore,
     StrategyRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _error_payload(
@@ -86,6 +91,15 @@ def create_app(
     async def lifespan(app: FastAPI):
         database.initialize()
         strategies.ensure_initial(StrategyProfile.default())
+        LegacyImporter(
+            database,
+            strategies,
+            configured.legacy_adaptive_directory,
+        ).run()
+        try:
+            RetentionService(database).prune_all()
+        except Exception:  # noqa: BLE001 - cleanup must never block the command runtime
+            logger.warning("local retention cleanup failed")
         app.state.services = container
         yield
         try:

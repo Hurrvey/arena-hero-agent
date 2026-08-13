@@ -41,7 +41,7 @@ export class LiveConnection {
         await this.recover();
         return;
       }
-      if (message.type === "event" && this.store.applyEvent(message)) {
+      if (Number.isSafeInteger(Number(message.seq)) && this.store.applyEvent(message)) {
         this.onEvent?.(message);
       }
       if (this.store.snapshot.connection.needsReplay) await this.recover();
@@ -55,7 +55,7 @@ export class LiveConnection {
     const [state, plan, events] = await Promise.all([
       this.api.state().catch(() => null),
       this.api.plan().catch(() => null),
-      this.api.events(0),
+      this.api.eventsTail(),
     ]);
     this.store.replaceFromRest(state, plan, events.lastSeq, events.events || []);
   }

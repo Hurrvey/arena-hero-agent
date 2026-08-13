@@ -6,6 +6,8 @@ from fastapi import APIRouter, Query, Request
 
 from app.errors import AppError
 
+from .event_schema import service_event_envelope
+
 router = APIRouter(prefix="/api/v1")
 
 
@@ -46,19 +48,11 @@ def events(
     request: Request,
     after_seq: int = Query(default=0, alias="afterSeq", ge=0),
     limit: int = Query(default=200, ge=1, le=1000),
+    tail: bool = Query(default=False),
 ) -> dict[str, object]:
-    page = request.app.state.services.runtime_store.events_after(after_seq, limit=limit)
+    store = request.app.state.services.runtime_store
+    page = store.latest_events(limit=limit) if tail else store.events_after(after_seq, limit=limit)
     return {
-        "events": [
-            {
-                "seq": event.seq,
-                "sessionId": event.session_id,
-                "tick": event.tick,
-                "type": event.event_type,
-                "payload": event.payload,
-                "createdAt": event.created_at,
-            }
-            for event in page.events
-        ],
+        "events": [service_event_envelope(event) for event in page.events],
         "lastSeq": page.last_seq,
     }

@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from adaptive_strategy import SkillBundle, SkillBundleError
 from app.adaptive.coordinator import apply_persisted_candidate
 from app.errors import AppError
-from strategy_policy import StrategyProfile
 
 router = APIRouter(prefix="/api/v1")
 
@@ -49,13 +48,23 @@ def reports(request: Request) -> dict[str, object]:
         current_fingerprint = None
     return {
         "items": [
-            _report(window, candidates.get(window.cycle_id), current_fingerprint)
+            _report(
+                window,
+                candidates.get(window.cycle_id),
+                current_fingerprint,
+                services.strategies,
+            )
             for window in services.adaptive.windows()
         ]
     }
 
 
-def _report(window, candidate, current_fingerprint: str | None) -> dict[str, object]:
+def _report(
+    window,
+    candidate,
+    current_fingerprint: str | None,
+    strategies,
+) -> dict[str, object]:
     result: dict[str, object] = {
         "cycleId": window.cycle_id,
         "startTick": window.start_tick,
@@ -72,10 +81,8 @@ def _report(window, candidate, current_fingerprint: str | None) -> dict[str, obj
     if candidate:
         result["candidateId"] = candidate["candidateId"]
         try:
-            base = StrategyProfile.from_mapping(
-                candidate["report"]["designer"].get("previousProfile", {})
-            )
-        except (ValueError, KeyError, TypeError):
+            base = strategies.get(window.base_revision).profile
+        except LookupError:
             base = None
         current = candidate["profile"]
         if base is not None:
@@ -84,7 +91,25 @@ def _report(window, candidate, current_fingerprint: str | None) -> dict[str, obj
                 for name, before in base.to_mapping().items()
                 if current.get(name) != before
             ]
-    if current_fingerprint and current_fingerprint != window.skill_fingerprint:
+    try:
+        active_revision = strategies.current().revision
+    except LookupError:
+        active_revision = None
+    try:
+        pending = strategies.pending()
+        pending_revision = pending.revision if pending is not None else None
+    except LookupError:
+        pending_revision = None
+    if window.candidate_revision is not None and window.candidate_revision == active_revision:
+        result["status"] = "APPLIED"
+    elif window.candidate_revision is not None and window.candidate_revision == pending_revision:
+        result["status"] = "PENDING_ACTIVATION"
+    elif result["status"] in {"APPLIED", "REJECTED"}:
+        pass
+    elif active_revision is not None and window.base_revision != active_revision:
+        result["status"] = "STALE"
+        result["disabledReason"] = "基准策略版本已变化，候选已过期"
+    elif current_fingerprint and current_fingerprint != window.skill_fingerprint:
         result["status"] = "STALE"
         result["disabledReason"] = "Skill 指纹已变化，候选已过期"
     elif window.sample_count < 30:
@@ -100,16 +125,20 @@ def decide_candidate(
 ) -> dict[str, object]:
     services = request.app.state.services
     try:
-        services.adaptive.candidate(candidate_id)
+        candidate = services.adaptive.candidate(candidate_id)
     except LookupError as exc:
         raise AppError("ADAPTIVE_CANDIDATE_NOT_FOUND", "Candidate was not found", 404) from exc
     if payload.action == "REJECT":
-        services.adaptive.mark_candidate(candidate_id, status="REJECTED")
+        if not services.adaptive.reject_candidate(candidate_id):
+            raise AppError(
+                "ADAPTIVE_CANDIDATE_STATE_CONFLICT",
+                "Candidate has already created a strategy revision",
+                409,
+                {"status": candidate["status"]},
+            )
         return {"candidateId": candidate_id, "status": "REJECTED"}
     state = (
-        services.runtime_store.current_state(services.session_id)
-        if services.session_id
-        else None
+        services.runtime_store.current_state(services.session_id) if services.session_id else None
     )
     defense = str((state or {}).get("defenseLevel", (state or {}).get("threat", "CLEAR")))
     try:

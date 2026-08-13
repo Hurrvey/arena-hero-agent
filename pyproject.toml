@@ -21,7 +21,7 @@ dev = [
   "httpx>=0.28,<1",
   "pip-audit>=2.9,<3",
   "playwright>=1.58,<2",
-  "pytest>=8.4,<9",
+  "pytest>=9.0.3,<10",
   "pytest-asyncio>=1.1,<2",
   "ruff>=0.12,<1",
 ]

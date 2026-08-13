@@ -107,3 +107,42 @@ def test_saved_profile_waits_for_turn_boundary_activation(
     page.get_by_role("button", name="保存为待激活版本").click()
 
     expect(page.get_by_text("等待下一个 Tick 边界激活")).to_be_visible()
+
+
+def test_rollback_creates_a_new_pending_revision(page: Page, live_server_url: str) -> None:
+    install_strategy_mocks(page)
+    page.route(
+        "**/api/v1/strategy/history",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "items": [
+                        {"revision": 7, "status": "ACTIVE", "source": "MANUAL", "profile": PROFILE},
+                        {
+                            "revision": 4,
+                            "status": "SUPERSEDED",
+                            "source": "DEFAULT",
+                            "profile": PROFILE,
+                        },
+                    ]
+                }
+            ),
+        ),
+    )
+    page.route(
+        "**/api/v1/strategy/rollback",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {"revision": 8, "status": "PENDING", "source": "ROLLBACK", "profile": PROFILE}
+            ),
+        ),
+    )
+    page.goto(live_server_url + "/strategy")
+
+    page.get_by_role("button", name="回滚到 REV 4").click()
+
+    expect(page.get_by_text("回滚版本等待下一个 Tick 边界激活")).to_be_visible()

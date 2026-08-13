@@ -14,7 +14,11 @@ def test_pause_and_stop_wait_for_server_confirmation(
     def controls(route):
         action = route.request.url.rsplit("/", 1)[-1]
         status = {"pause": "PAUSED", "stop": "STOPPED", "resume": "RUNNING"}.get(action, "RUNNING")
-        route.fulfill(status=200, content_type="application/json", body=json.dumps({"runtimeId": "test", "status": status, "lastTick": 1234}))
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"runtimeId": "test", "status": status, "lastTick": 1234}),
+        )
 
     page.route("**/api/v1/agent/pause", controls)
     page.route("**/api/v1/agent/stop", controls)

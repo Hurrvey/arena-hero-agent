@@ -10,7 +10,9 @@
   .command-bar { padding:9px 14px; }
   .brand { font-size:17px; }
   .brand img { width:35px; }
-  .nav-links { display:none; }
+  .brand { min-width:0; }
+  .nav-links { grid-column:1 / -1; grid-row:3; width:100%; margin:8px 0 0; overflow-x:auto; overscroll-behavior-inline:contain; scrollbar-width:thin; }
+  .nav-link { flex:0 0 auto; min-width:66px; text-align:center; }
   .command-actions .button { padding:0 12px; }
   .workspace { padding:10px 12px 20px; }
   .metrics-grid { grid-template-columns:repeat(2,1fr); }
@@ -27,6 +29,8 @@
 }
 @media (max-width: 480px) {
   .command-bar { grid-template-columns:1fr; }
+  .brand { display:grid; grid-template-columns:auto 1fr; width:100%; }
+  .brand .nav-links { grid-column:1 / -1; }
   .command-actions { margin-top:8px; justify-content:stretch; }
   .command-actions .button { flex:1; }
   .runtime-strip { gap:10px; font-size:12px; }

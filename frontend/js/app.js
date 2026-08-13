@@ -8,7 +8,7 @@ import { renderUnitTable } from "./components/unit-table.js";
 import { TacticalMap } from "./map/tactical-map.js";
 import { renderOverview } from "./views/overview.js";
 import { installStrategy, renderStrategy } from "./views/strategy.js";
-import { renderAdaptive } from "./views/adaptive.js";
+import { installAdaptive, renderAdaptive } from "./views/adaptive.js";
 import { installHistory, renderHistory } from "./views/history.js";
 import { renderSettings } from "./views/settings.js";
 
@@ -17,7 +17,7 @@ const main = document.querySelector("#route-view"); const header = document.quer
 
 async function bootstrap() {
   const [runtime, metrics, strategy, adaptive, state, plan, events] = await Promise.all([
-    api.status(), api.metrics(), api.strategy(), api.adaptive(), api.state().catch(() => null), api.plan().catch(() => null), api.events(0),
+    api.status(), api.metrics(), api.strategy(), api.adaptive(), api.state().catch(() => null), api.plan().catch(() => null), api.eventsTail(),
   ]);
   store.snapshot = { ...store.snapshot, runtime, metrics, strategy, adaptive };
   store.replaceFromRest(state, plan, events.lastSeq, events.events || []);
@@ -58,7 +58,7 @@ async function renderSecondary(route) {
       store.snapshot = { ...store.snapshot, strategy }; renderStrategy(main, strategy, schema); installStrategy(main, strategy, api, store);
     } else if (route === "/adaptive") {
       const [status, reports] = await Promise.all([api.adaptive(), api.adaptiveReports()]);
-      if (nonce !== routeNonce || activeRoute !== route) return; renderAdaptive(main, status, reports);
+      if (nonce !== routeNonce || activeRoute !== route) return; renderAdaptive(main, status, reports); installAdaptive(main, api, store.snapshot.strategy);
     } else if (route === "/history") {
       const series = await api.metricSeries(); if (nonce !== routeNonce || activeRoute !== route) return; renderHistory(main, series); installHistory(main, api);
     } else if (route === "/settings") {

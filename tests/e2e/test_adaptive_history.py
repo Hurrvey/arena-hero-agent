@@ -23,6 +23,7 @@ def install_secondary_view_mocks(page: Page) -> None:
         "/api/v1/adaptive/reports": {
             "items": [
                 {
+                    "candidateId": "candidate-stale",
                     "cycleId": "cycle-1",
                     "startTick": 100,
                     "endTick": 160,
@@ -36,6 +37,7 @@ def install_secondary_view_mocks(page: Page) -> None:
                 }
             ]
         },
+        "/api/v1/strategy": {"revision": 7, "status": "ACTIVE", "profile": {}},
         "/api/v1/metrics/series": {
             "points": [
                 {"tick": 101, "resources": 3, "population": 2, "beaconOwned": 0},
@@ -45,7 +47,8 @@ def install_secondary_view_mocks(page: Page) -> None:
             "markers": [{"tick": 107, "eventType": "beacon.captured"}],
         },
         "/api/v1/settings": {
-            "retentionDays": 14,
+            "rawRetentionDays": 7,
+            "eventRetentionDays": 30,
             "logLevel": "INFO",
             "providerConfigured": True,
             "providerHost": "api.openai.com",
@@ -66,6 +69,60 @@ def install_secondary_view_mocks(page: Page) -> None:
         page.route(f"**{path}", route)
 
 
+def test_reviewable_candidate_can_be_applied_after_server_confirmation(
+    page: Page,
+    live_server_url: str,
+) -> None:
+    install_api_mocks(page)
+    page.route(
+        "**/api/v1/adaptive/status",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"enabled": True, "status": "REVIEW_REQUIRED"}),
+        ),
+    )
+    page.route(
+        "**/api/v1/adaptive/reports",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "items": [
+                        {
+                            "candidateId": "candidate-1",
+                            "startTick": 100,
+                            "endTick": 160,
+                            "sampleCount": 60,
+                            "rawScore": 180,
+                            "scorePerTick": 3,
+                            "status": "REVIEW_REQUIRED",
+                            "skillFingerprint": "current",
+                            "changes": [],
+                        }
+                    ]
+                }
+            ),
+        ),
+    )
+    page.route(
+        "**/api/v1/adaptive/candidates/candidate-1",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {"candidateId": "candidate-1", "status": "PENDING_ACTIVATION", "revision": 8}
+            ),
+        ),
+    )
+    page.goto(live_server_url + "/adaptive")
+
+    page.get_by_role("button", name="应用候选").click()
+
+    expect(page.get_by_text("候选已进入待激活版本")).to_be_visible()
+
+
 def test_candidate_shows_samples_score_fingerprint_diff_and_disabled_reason(
     page: Page,
     live_server_url: str,
@@ -78,6 +135,7 @@ def test_candidate_shows_samples_score_fingerprint_diff_and_disabled_reason(
     expect(page.get_by_text("old-fingerprint")).to_be_visible()
     expect(page.get_by_text("economy_priority")).to_be_visible()
     expect(page.get_by_role("button", name="应用候选")).to_be_disabled()
+    expect(page.get_by_role("button", name="拒绝")).to_be_enabled()
     expect(page.get_by_text("Skill 指纹已变化")).to_be_visible()
 
 

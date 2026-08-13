@@ -29,7 +29,7 @@ export function renderStrategy(root, strategy, schema) {
   <form id="strategy-form" class="strategy-layout">
     <div class="strategy-groups">${GROUPS.map(([name, fields]) => `<section class="panel form-section"><header class="panel-header"><h2 class="panel-title">${name}</h2></header><div class="field-grid">${fields.map((field) => fieldControl(field, strategy.profile[field], schema?.fields?.[field])).join("")}</div></section>`).join("")}</div>
     <aside class="panel sticky-review"><header class="panel-header"><h2 class="panel-title">版本差异</h2></header><div class="review-body"><div id="profile-diff">${renderProfileDiff([])}</div><label class="field-control"><span>变更原因</span><textarea id="strategy-reason" required maxlength="500">本地控制台调整</textarea></label><button class="button button-primary save-profile" type="submit">保存为待激活版本</button><p class="muted">不会中途修改正在生成或已经提交的计划。</p></div></aside>
-  </form>`;
+  </form><section id="strategy-history" class="panel strategy-history"><div class="empty-state"><div><strong>正在读取版本历史</strong></div></div></section>`;
 }
 
 function fieldControl(field, value, bounds = {}) {
@@ -66,6 +66,15 @@ export function installStrategy(root, strategy, api, store) {
       } else notice(root, `保存失败：${error.message}`, "danger");
     } finally { button.disabled = false; }
   });
+  api.strategyHistory().then((history) => {
+    const host = root.querySelector("#strategy-history");
+    host.innerHTML = `<header class="panel-header"><h2 class="panel-title">版本历史</h2></header><div class="revision-list">${(history.items || []).map((item) => `<div><span class="mono">REV ${item.revision}</span><span>${item.source} · ${item.status}</span>${item.revision !== strategy.revision ? `<button class="button" data-rollback="${item.revision}" aria-label="回滚到 REV ${item.revision}">回滚</button>` : ""}</div>`).join("")}</div>`;
+    host.querySelectorAll("[data-rollback]").forEach((button) => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try { await api.rollbackStrategy({ expectedRevision:strategy.revision, targetRevision:Number(button.dataset.rollback), reason:"dashboard rollback" }); notice(root, "回滚版本等待下一个 Tick 边界激活", "good"); }
+      catch (error) { notice(root, `回滚失败：${error.message}`, "danger"); button.disabled = false; }
+    }));
+  }).catch(() => {});
 }
 
 function notice(root, message, tone) {
