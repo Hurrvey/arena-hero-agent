@@ -87,6 +87,19 @@ def test_dashboard_renders_runtime_metrics_plan_events_and_units(
     expect(page.locator("#tactical-map")).to_be_visible()
 
 
+def test_empty_dashboard_connects_live_before_the_first_turn(
+    page: Page,
+    live_server_url: str,
+) -> None:
+    page.set_default_timeout(4_000)
+    with page.expect_websocket() as websocket_info:
+        page.goto(live_server_url + "/")
+
+    assert websocket_info.value.url.endswith("/ws/v1/live?afterSeq=0")
+    expect(page.locator("#toast")).to_be_hidden()
+    expect(page.get_by_text("已停止")).to_be_visible()
+
+
 def test_enemy_removed_from_new_snapshot_disappears_from_unit_details(
     page: Page,
     live_server_url: str,

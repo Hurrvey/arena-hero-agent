@@ -46,3 +46,13 @@ test("UNKNOWN beacon never creates a guessed carrier", () => {
 
   assert.equal(store.snapshot.state.beacon.carrierId, undefined);
 });
+
+test("empty authoritative state can initialize before the first Turn", () => {
+  const store = new AppStore();
+
+  store.replaceFromRest(null, null, 0, []);
+
+  assert.equal(store.snapshot.state, null);
+  assert.equal(store.snapshot.plan, null);
+  assert.equal(store.snapshot.connection.needsReplay, false);
+});

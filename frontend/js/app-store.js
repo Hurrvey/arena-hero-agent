@@ -58,7 +58,7 @@ export class AppStore {
 
   replaceFromRest(state, plan, lastSeq, events = []) {
     const safeState = state ? structuredClone(state) : null;
-    if (safeState?.beacon?.status == null && safeState.beacon) {
+    if (safeState?.beacon && safeState.beacon.status == null) {
       delete safeState.beacon.carrierId;
       delete safeState.beacon.carrier_id;
     }
