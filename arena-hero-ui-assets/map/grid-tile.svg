@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="Tactical map grid tile">
+  <rect width="32" height="32" fill="#0A1726"/>
+  <path d="M31.5 0v32M0 31.5h32" fill="none" stroke="#1B3148"/>
+  <path d="M1 1h30v30H1z" fill="#2B82C5" opacity=".025"/>
+</svg>
+

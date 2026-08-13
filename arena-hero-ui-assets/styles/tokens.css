@@ -1,0 +1,118 @@
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --ah-bg: #07111f;
+  --ah-bg-deep: #040a13;
+  --ah-panel: #0d1b2c;
+  --ah-panel-raised: #102238;
+  --ah-panel-hover: #142b44;
+  --ah-grid: #1b3148;
+  --ah-border: #243c55;
+  --ah-border-strong: #315476;
+
+  /* Text */
+  --ah-text: #f2f7fc;
+  --ah-text-muted: #9bb0c6;
+  --ah-text-subtle: #647d96;
+
+  /* Tactical semantics */
+  --ah-primary: #2693ff;
+  --ah-primary-strong: #0877e6;
+  --ah-cyan: #36d5ff;
+  --ah-friendly: #2d9cff;
+  --ah-success: #35d17c;
+  --ah-warning: #ffb83e;
+  --ah-beacon: #ffc844;
+  --ah-danger: #ff4d5f;
+  --ah-danger-deep: #a51e35;
+  --ah-neutral: #7f93a9;
+  --ah-obstacle: #6c7885;
+
+  /* Map overlays */
+  --ah-fog: rgba(2, 7, 13, 0.78);
+  --ah-visible: rgba(43, 130, 197, 0.06);
+  --ah-risk-low: rgba(255, 184, 62, 0.14);
+  --ah-risk-high: rgba(255, 77, 95, 0.24);
+  --ah-route: #52cfff;
+  --ah-attack-ray: #ffc844;
+
+  /* Type */
+  --ah-font-sans: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --ah-font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --ah-text-xs: 12px;
+  --ah-text-sm: 13px;
+  --ah-text-md: 14px;
+  --ah-text-lg: 16px;
+  --ah-text-xl: 20px;
+  --ah-text-2xl: 28px;
+
+  /* Spacing */
+  --ah-space-1: 4px;
+  --ah-space-2: 8px;
+  --ah-space-3: 12px;
+  --ah-space-4: 16px;
+  --ah-space-5: 20px;
+  --ah-space-6: 24px;
+  --ah-space-8: 32px;
+
+  /* Shape and elevation */
+  --ah-radius-sm: 6px;
+  --ah-radius-md: 10px;
+  --ah-radius-lg: 14px;
+  --ah-shadow-panel: 0 12px 32px rgba(0, 0, 0, 0.24);
+  --ah-shadow-active: 0 0 18px rgba(38, 147, 255, 0.28);
+  --ah-shadow-danger: 0 0 18px rgba(255, 77, 95, 0.22);
+
+  /* Motion */
+  --ah-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ah-duration-fast: 120ms;
+  --ah-duration-normal: 220ms;
+}
+
+.ah-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  display: inline-block;
+  flex: 0 0 auto;
+  color: currentColor;
+  vertical-align: -0.2em;
+}
+
+.ah-entity {
+  width: 2rem;
+  height: 2rem;
+  display: block;
+  color: var(--ah-friendly);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+}
+
+.ah-entity--enemy { color: var(--ah-danger); }
+.ah-entity--beacon { color: var(--ah-beacon); }
+.ah-entity--resource { color: var(--ah-success); }
+.ah-status--success { color: var(--ah-success); }
+.ah-status--warning { color: var(--ah-warning); }
+.ah-status--danger { color: var(--ah-danger); }
+.ah-status--info { color: var(--ah-primary); }
+
+.ah-panel {
+  background: var(--ah-panel);
+  border: 1px solid var(--ah-border);
+  border-radius: var(--ah-radius-md);
+  box-shadow: var(--ah-shadow-panel);
+}
+
+.ah-focusable:focus-visible {
+  outline: 2px solid var(--ah-cyan);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+

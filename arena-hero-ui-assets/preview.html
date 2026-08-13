@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arena Hero Agent · UI Assets</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ah-text);
+      background:
+        radial-gradient(circle at 75% 0, rgba(38,147,255,.1), transparent 28rem),
+        var(--ah-bg-deep);
+      font: 14px/1.5 var(--ah-font-sans);
+    }
+    .shell { width: min(1240px, calc(100% - 40px)); margin: 0 auto; padding: 36px 0 72px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .brand img { width: 48px; height: 48px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 2px; font-size: 24px; letter-spacing: .08em; }
+    h2 { margin-bottom: 18px; font-size: 16px; }
+    .muted { color: var(--ah-text-muted); }
+    .badge { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 12px; border: 1px solid var(--ah-border); border-radius: 999px; background: var(--ah-panel); color: var(--ah-success); font-weight: 700; }
+    .badge svg { width: 17px; height: 17px; }
+    .section { margin-top: 18px; padding: 22px; background: var(--ah-panel); border: 1px solid var(--ah-border); border-radius: 12px; box-shadow: var(--ah-shadow-panel); }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; }
+    .section-head p { margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(142px, 1fr)); gap: 12px; }
+    .asset { min-height: 142px; display: grid; place-items: center; padding: 14px; background: var(--ah-bg); border: 1px solid var(--ah-grid); border-radius: 9px; text-align: center; transition: border-color var(--ah-duration-fast), transform var(--ah-duration-fast); }
+    .asset:hover { transform: translateY(-2px); border-color: var(--ah-border-strong); }
+    .asset svg { width: 62px; height: 62px; color: var(--ah-friendly); filter: drop-shadow(0 4px 9px rgba(0,0,0,.55)); }
+    .asset small { display: block; margin-top: 10px; color: var(--ah-text-muted); font-family: var(--ah-font-mono); }
+    .asset--enemy svg { color: var(--ah-danger); }
+    .asset--beacon svg { color: var(--ah-beacon); }
+    .asset--resource svg { color: var(--ah-success); }
+    .asset--obstacle svg { color: var(--ah-obstacle); }
+    .icons { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); gap: 10px; }
+    .icon-item { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; background: var(--ah-bg); border: 1px solid var(--ah-grid); border-radius: 8px; color: var(--ah-text-muted); }
+    .icon-item svg { width: 22px; height: 22px; color: var(--ah-primary); flex: none; }
+    .icon-item.success svg { color: var(--ah-success); }
+    .icon-item.warning svg { color: var(--ah-warning); }
+    .icon-item.danger svg { color: var(--ah-danger); }
+    .swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; }
+    .swatch { overflow: hidden; border: 1px solid var(--ah-border); border-radius: 8px; background: var(--ah-bg); }
+    .swatch-color { height: 58px; }
+    .swatch-copy { padding: 10px; color: var(--ah-text-muted); font-family: var(--ah-font-mono); font-size: 12px; }
+    .map-demo { position: relative; min-height: 310px; overflow: hidden; border: 1px solid var(--ah-border); border-radius: 10px; background-color: var(--ah-bg); background-image: url("map/grid-tile.svg"); }
+    .map-demo::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 42% 55%, transparent 0 28%, rgba(2,7,13,.25) 48%, rgba(2,7,13,.86) 87%); }
+    .map-item { position: absolute; z-index: 2; width: 40px; height: 40px; filter: drop-shadow(0 4px 8px rgba(0,0,0,.65)); }
+    .map-item svg { width: 100%; height: 100%; }
+    .core { left: 39%; top: 48%; width: 52px; height: 52px; color: var(--ah-friendly); }
+    .worker { left: 27%; top: 36%; color: var(--ah-friendly); }
+    .ranger { left: 53%; top: 35%; color: var(--ah-friendly); }
+    .enemy { left: 70%; top: 41%; color: var(--ah-danger); }
+    .beacon { left: 65%; top: 12%; color: var(--ah-beacon); }
+    .resource { left: 14%; top: 18%; color: var(--ah-success); }
+    .obstacle { left: 24%; top: 68%; color: var(--ah-obstacle); width: 52px; height: 52px; }
+    .risk { position: absolute; z-index: 1; left: 65%; top: 34%; width: 160px; height: 128px; background: rgba(255,77,95,.13); border: 1px solid rgba(255,77,95,.35); box-shadow: inset 0 0 40px rgba(255,77,95,.08); }
+    .route { position: absolute; z-index: 2; left: 46%; top: 51%; width: 25%; border-top: 2px dashed var(--ah-route); transform: rotate(-8deg); transform-origin: left; filter: drop-shadow(0 0 4px rgba(54,213,255,.55)); }
+    .route::after { content: ""; position: absolute; right: -2px; top: -5px; width: 8px; height: 8px; border-top: 2px solid var(--ah-route); border-right: 2px solid var(--ah-route); transform: rotate(45deg); }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; color: var(--ah-text-muted); }
+    .legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+    .code { margin-top: 16px; padding: 14px 16px; overflow-x: auto; color: #cde9ff; background: var(--ah-bg-deep); border: 1px solid var(--ah-grid); border-radius: 8px; font: 12px/1.7 var(--ah-font-mono); }
+    @media (max-width: 680px) { .topbar { align-items: flex-start; flex-direction: column; } .shell { width: min(100% - 24px, 1240px); padding-top: 24px; } .section { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img src="brand/logo-mark.svg" alt="Arena Hero Agent">
+        <div><h1>ARENA HERO AGENT</h1><div class="muted">UI Asset System · v1.0</div></div>
+      </div>
+      <div class="badge"><svg aria-hidden="true"><use href="icons/ui-symbols.svg#status-live"></use></svg>与控制台设计稿一致</div>
+    </header>
+
+    <section class="section">
+      <div class="section-head"><div><h2>战术地图实体</h2><p class="muted">同一图标通过 currentColor 切换友军、敌军和任务状态。</p></div></div>
+      <div class="grid">
+        <div class="asset"><svg aria-label="Core"><use href="icons/ui-symbols.svg#entity-core"></use></svg><small>entity-core</small></div>
+        <div class="asset"><svg aria-label="Worker"><use href="icons/ui-symbols.svg#entity-worker"></use></svg><small>entity-worker</small></div>
+        <div class="asset"><svg aria-label="Vanguard"><use href="icons/ui-symbols.svg#entity-vanguard"></use></svg><small>entity-vanguard</small></div>
+        <div class="asset"><svg aria-label="Ranger"><use href="icons/ui-symbols.svg#entity-ranger"></use></svg><small>entity-ranger</small></div>
+        <div class="asset asset--enemy"><svg aria-label="Enemy Ranger"><use href="icons/ui-symbols.svg#entity-ranger"></use></svg><small>enemy variant</small></div>
+        <div class="asset asset--beacon"><svg aria-label="Beacon"><use href="icons/ui-symbols.svg#map-beacon"></use></svg><small>map-beacon</small></div>
+        <div class="asset asset--resource"><svg aria-label="Resource"><use href="icons/ui-symbols.svg#map-resource"></use></svg><small>map-resource</small></div>
+        <div class="asset asset--obstacle"><svg aria-label="Obstacle"><use href="icons/ui-symbols.svg#map-obstacle"></use></svg><small>map-obstacle</small></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>地图组合预览</h2>
+      <div class="map-demo" aria-label="Arena Hero tactical map asset preview">
+        <div class="risk"></div><div class="route"></div>
+        <svg class="map-item core"><use href="icons/ui-symbols.svg#entity-core"></use></svg>
+        <svg class="map-item worker"><use href="icons/ui-symbols.svg#entity-worker"></use></svg>
+        <svg class="map-item ranger"><use href="icons/ui-symbols.svg#entity-ranger"></use></svg>
+        <svg class="map-item enemy"><use href="icons/ui-symbols.svg#entity-vanguard"></use></svg>
+        <svg class="map-item beacon"><use href="icons/ui-symbols.svg#map-beacon"></use></svg>
+        <svg class="map-item resource"><use href="icons/ui-symbols.svg#map-resource"></use></svg>
+        <svg class="map-item obstacle"><use href="icons/ui-symbols.svg#map-obstacle"></use></svg>
+      </div>
+      <div class="legend">
+        <span style="color:var(--ah-friendly)"><i class="dot"></i>友军</span>
+        <span style="color:var(--ah-danger)"><i class="dot"></i>可见敌军/高风险</span>
+        <span style="color:var(--ah-success)"><i class="dot"></i>当前资源</span>
+        <span style="color:var(--ah-beacon)"><i class="dot"></i>Beacon</span>
+        <span style="color:var(--ah-route)"><i class="dot"></i>计划路线</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>状态、指标与操作</h2>
+      <div class="icons">
+        <div class="icon-item success"><svg><use href="icons/ui-symbols.svg#status-live"></use></svg>运行中</div>
+        <div class="icon-item success"><svg><use href="icons/ui-symbols.svg#status-success"></use></svg>成功</div>
+        <div class="icon-item warning"><svg><use href="icons/ui-symbols.svg#status-warning"></use></svg>警告</div>
+        <div class="icon-item danger"><svg><use href="icons/ui-symbols.svg#status-danger"></use></svg>危险</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#metric-resource"></use></svg>资源</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#metric-population"></use></svg>人口</div>
+        <div class="icon-item danger"><svg><use href="icons/ui-symbols.svg#metric-health"></use></svg>HP</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#metric-shield"></use></svg>Shield</div>
+        <div class="icon-item success"><svg><use href="icons/ui-symbols.svg#control-play"></use></svg>启动</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#control-pause"></use></svg>暂停</div>
+        <div class="icon-item danger"><svg><use href="icons/ui-symbols.svg#control-stop"></use></svg>停止</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#control-zoom-in"></use></svg>放大</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#control-zoom-out"></use></svg>缩小</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#control-crosshair"></use></svg>定位</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#control-filter"></use></svg>筛选</div>
+        <div class="icon-item"><svg><use href="icons/ui-symbols.svg#action-move"></use></svg>移动</div>
+        <div class="icon-item danger"><svg><use href="icons/ui-symbols.svg#action-attack"></use></svg>攻击</div>
+        <div class="icon-item success"><svg><use href="icons/ui-symbols.svg#action-harvest"></use></svg>采集</div>
+        <div class="icon-item warning"><svg><use href="icons/ui-symbols.svg#action-deposit"></use></svg>存入</div>
+        <div class="icon-item success"><svg><use href="icons/ui-symbols.svg#action-heal"></use></svg>恢复</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>核心颜色</h2>
+      <div class="swatches">
+        <div class="swatch"><div class="swatch-color" style="background:#07111f"></div><div class="swatch-copy">BG · #07111F</div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#0d1b2c"></div><div class="swatch-copy">PANEL · #0D1B2C</div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#2d9cff"></div><div class="swatch-copy">FRIENDLY · #2D9CFF</div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#35d17c"></div><div class="swatch-copy">SUCCESS · #35D17C</div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#ffc844"></div><div class="swatch-copy">BEACON · #FFC844</div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#ff4d5f"></div><div class="swatch-copy">DANGER · #FF4D5F</div></div>
+      </div>
+      <pre class="code">&lt;svg class="ah-entity ah-entity--enemy" aria-label="Enemy Ranger"&gt;
+  &lt;use href="icons/ui-symbols.svg#entity-ranger"&gt;&lt;/use&gt;
+&lt;/svg&gt;</pre>
+    </section>
+  </main>
+</body>
+</html>

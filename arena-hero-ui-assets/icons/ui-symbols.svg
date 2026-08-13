@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="brand-mark" viewBox="0 0 64 64">
+    <path d="M32 4 56 17.5v29L32 60 8 46.5v-29L32 4Z" fill="#07111F" stroke="currentColor" stroke-width="4"/>
+    <path d="M32 11.5 49.5 21v21L32 52.5 14.5 42V21L32 11.5Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.5"/>
+    <path d="m32 18 11 10-4.2 16H25.2L21 28l11-10Z" fill="currentColor"/>
+    <path d="m32 23 6.2 5.7-2.4 9.1h-7.6l-2.4-9.1L32 23Z" fill="#E8F6FF"/>
+  </symbol>
+
+  <symbol id="entity-core" viewBox="0 0 64 64">
+    <g fill="none" stroke="currentColor" stroke-linejoin="round">
+      <path d="M12 24 32 13l20 11v24L32 59 12 48V24Z" fill="currentColor" fill-opacity=".14" stroke-width="2.6"/>
+      <path d="M18 26 32 18l14 8v17L32 51l-14-8V26Z" fill="currentColor" fill-opacity=".24" stroke-width="1.5"/>
+      <path d="M24 29h16v14H24z" fill="currentColor" fill-opacity=".6" stroke-width="2"/>
+      <path d="M28 29v-5h8v5M28 36h8M32 32v8" stroke="#E7F6FF" stroke-width="2" stroke-linecap="round"/>
+      <path d="M8 28h6M50 28h6M8 44h6M50 44h6" stroke-width="2.6" stroke-linecap="round"/>
+    </g>
+  </symbol>
+
+  <symbol id="entity-worker" viewBox="0 0 64 64">
+    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="32" cy="17" r="7" fill="currentColor" fill-opacity=".42" stroke-width="2.4"/>
+      <path d="M20 35c0-7 5.4-12 12-12s12 5 12 12v12H20V35Z" fill="currentColor" fill-opacity=".2" stroke-width="2.4"/>
+      <path d="M24 47v9M40 47v9M19 34l-7 10M45 34l7 10" stroke-width="3"/>
+      <path d="m42 18 8-8M45 9l6 6M42 18l-5 5" stroke-width="2.6"/>
+      <path d="M27 31h10v9H27z" fill="currentColor" fill-opacity=".7" stroke-width="1.8"/>
+    </g>
+  </symbol>
+
+  <symbol id="entity-vanguard" viewBox="0 0 64 64">
+    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="26" cy="15" r="6" fill="currentColor" fill-opacity=".42" stroke-width="2.4"/>
+      <path d="M15 32c0-6.5 5-11 11-11s11 4.5 11 11v15H15V32Z" fill="currentColor" fill-opacity=".2" stroke-width="2.4"/>
+      <path d="M20 47v9M32 47v9M15 32 9 43" stroke-width="3"/>
+      <path d="m44 20 11 5v10c0 9-4.7 16-11 20-6.3-4-11-11-11-20V25l11-5Z" fill="currentColor" fill-opacity=".3" stroke-width="2.4"/>
+      <path d="M44 27v19M38 35h12" stroke="#E7F6FF" stroke-width="2"/>
+    </g>
+  </symbol>
+
+  <symbol id="entity-ranger" viewBox="0 0 64 64">
+    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="28" cy="17" r="7" fill="currentColor" fill-opacity=".42" stroke-width="2.4"/>
+      <path d="M16 35c0-7 5.4-12 12-12s12 5 12 12v12H16V35Z" fill="currentColor" fill-opacity=".2" stroke-width="2.4"/>
+      <path d="M21 47v9M35 47v9M16 34l-7 10" stroke-width="3"/>
+      <path d="M37 31h17M45.5 22v18" stroke-width="2.6"/>
+      <circle cx="45.5" cy="31" r="8.5" stroke-width="2.2"/>
+      <circle cx="45.5" cy="31" r="2" fill="currentColor" stroke="none"/>
+    </g>
+  </symbol>
+
+  <symbol id="map-beacon" viewBox="0 0 64 64">
+    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M32 5v9M32 50v9M5 32h9M50 32h9M13 13l6 6M45 45l6 6M51 13l-6 6M19 45l-6 6" stroke-width="2" opacity=".75"/>
+      <path d="m32 13 8 12-4 9 6 8-10 9-10-9 6-8-4-9 8-12Z" fill="currentColor" fill-opacity=".3" stroke-width="2.6"/>
+      <path d="M32 19v25M27 29h10" stroke-width="2.4"/>
+      <circle cx="32" cy="32" r="4" fill="currentColor" stroke="none"/>
+    </g>
+  </symbol>
+
+  <symbol id="map-resource" viewBox="0 0 64 64">
+    <g stroke="currentColor" stroke-linejoin="round">
+      <path d="m18 29 9-15 8 15-8 20-9-20Z" fill="currentColor" fill-opacity=".28" stroke-width="2.2"/>
+      <path d="m33 36 8-19 10 16-5 18-13-15Z" fill="currentColor" fill-opacity=".45" stroke-width="2.2"/>
+      <path d="m10 40 7-11 8 13-5 12-10-14Z" fill="currentColor" fill-opacity=".2" stroke-width="2"/>
+      <path d="M27 14v35M41 17l5 34M17 29l3 25" fill="none" stroke-width="1.5" opacity=".75"/>
+      <path d="M8 55h46" fill="none" stroke-width="2.5" stroke-linecap="round"/>
+    </g>
+  </symbol>
+
+  <symbol id="map-obstacle" viewBox="0 0 64 64">
+    <g stroke="currentColor" stroke-linejoin="round">
+      <path d="m8 20 12-8 12 7-3 16H12L8 20Z" fill="currentColor" fill-opacity=".36" stroke-width="2"/>
+      <path d="m29 18 15-8 12 10-5 16H33l-4-18Z" fill="currentColor" fill-opacity=".5" stroke-width="2"/>
+      <path d="m13 36 16-6 10 8-3 15H16l-3-17Z" fill="currentColor" fill-opacity=".44" stroke-width="2"/>
+      <path d="m37 36 13-5 7 9-5 14H34l3-18Z" fill="currentColor" fill-opacity=".3" stroke-width="2"/>
+    </g>
+  </symbol>
+
+  <symbol id="map-waypoint" viewBox="0 0 24 24">
+    <path d="M12 2 21 12 12 22 3 12 12 2Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/>
+    <circle cx="12" cy="12" r="3" fill="currentColor"/>
+  </symbol>
+
+  <symbol id="status-live" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="5" fill="currentColor"/>
+    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".32"/>
+  </symbol>
+  <symbol id="status-success" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="1.8"/>
+    <path d="m7.5 12.2 3 3 6.2-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="status-warning" viewBox="0 0 24 24">
+    <path d="M12 3 22 20H2L12 3Z" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M12 8v6M12 17.5h.01" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="status-danger" viewBox="0 0 24 24">
+    <path d="m8 2 8 0 6 6v8l-6 6H8l-6-6V8l6-6Z" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="1.8"/>
+    <path d="M12 7v6M12 16.5h.01" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="status-info" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="1.8"/>
+    <path d="M12 10v7M12 7h.01" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+  </symbol>
+
+  <symbol id="metric-resource" viewBox="0 0 24 24">
+    <path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="1.8"/>
+    <path d="m3 7 9 5 9-5M12 12v10" fill="none" stroke="currentColor" stroke-width="1.8"/>
+  </symbol>
+  <symbol id="metric-population" viewBox="0 0 24 24">
+    <circle cx="9" cy="8" r="3.5" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M2.5 20c0-4 2.8-6.5 6.5-6.5s6.5 2.5 6.5 6.5" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M16 6.5c2 0 3.5 1.5 3.5 3.5S18 13.5 16 13.5M17 14.5c2.8.4 4.5 2.2 4.5 5.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="metric-health" viewBox="0 0 24 24">
+    <path d="M12 21S3 16 3 9.5C3 6 5.4 4 8.2 4c1.7 0 3.1.8 3.8 2 0.7-1.2 2.1-2 3.8-2C18.6 4 21 6 21 9.5 21 16 12 21 12 21Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/>
+  </symbol>
+  <symbol id="metric-shield" viewBox="0 0 24 24">
+    <path d="m12 2 8 3.5V11c0 5.2-3.2 9-8 11-4.8-2-8-5.8-8-11V5.5L12 2Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8"/>
+  </symbol>
+
+  <symbol id="control-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z" fill="currentColor"/></symbol>
+  <symbol id="control-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></symbol>
+  <symbol id="control-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></symbol>
+  <symbol id="control-zoom-in" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5M10.5 7v7M7 10.5h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="control-zoom-out" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5M7 10.5h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="control-crosshair" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="control-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="control-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+
+  <symbol id="action-move" viewBox="0 0 24 24"><path d="M3 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="action-attack" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="action-harvest" viewBox="0 0 24 24"><path d="m5 20 9-9M12 5l3-3 7 7-3 3-7-7ZM3 21l4-1-3-3-1 4Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="action-deposit" viewBox="0 0 24 24"><path d="M4 9h16v11H4V9ZM7 9V5h10v4" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v11M9 11l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="action-heal" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity=".14" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v10M7 12h10" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+</svg>
+

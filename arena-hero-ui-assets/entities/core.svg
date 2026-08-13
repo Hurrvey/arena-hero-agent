@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Core</title>
+  <desc id="desc">Friendly Core tactical map marker.</desc>
+  <g fill="none" stroke="#2D9CFF" stroke-linejoin="round">
+    <path d="M12 24 32 13l20 11v24L32 59 12 48V24Z" fill="#0D2845" stroke-width="2.6"/>
+    <path d="M18 26 32 18l14 8v17L32 51l-14-8V26Z" fill="#174E7F" stroke="#77CAFF" stroke-width="1.5"/>
+    <path d="M24 29h16v14H24z" fill="#2693FF" stroke-width="2"/>
+    <path d="M28 29v-5h8v5M28 36h8M32 32v8" stroke="#E7F6FF" stroke-width="2" stroke-linecap="round"/>
+    <path d="M8 28h6M50 28h6M8 44h6M50 44h6" stroke-width="2.6" stroke-linecap="round"/>
+  </g>
+</svg>
+

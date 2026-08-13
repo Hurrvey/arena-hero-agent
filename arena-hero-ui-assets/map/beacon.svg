@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Champion Beacon</title>
+  <desc id="desc">Golden Champion Beacon marker.</desc>
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <g fill="none" stroke="#FFC844" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <path d="M32 5v9M32 50v9M5 32h9M50 32h9M13 13l6 6M45 45l6 6M51 13l-6 6M19 45l-6 6" stroke-width="2" opacity=".75"/>
+    <path d="m32 13 8 12-4 9 6 8-10 9-10-9 6-8-4-9 8-12Z" fill="#7A4E00" stroke-width="2.6"/>
+    <path d="M32 19v25M27 29h10" stroke="#FFF1B6" stroke-width="2.4"/>
+    <circle cx="32" cy="32" r="4" fill="#FFF1B6" stroke="none"/>
+  </g>
+</svg>
+

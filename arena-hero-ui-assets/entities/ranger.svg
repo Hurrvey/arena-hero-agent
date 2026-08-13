@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Ranger</title>
+  <desc id="desc">Ranger tactical map marker with targeting sight.</desc>
+  <g fill="none" stroke="#2D9CFF" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="28" cy="17" r="7" fill="#1B69A7" stroke-width="2.4"/>
+    <path d="M16 35c0-7 5.4-12 12-12s12 5 12 12v12H16V35Z" fill="#123B63" stroke-width="2.4"/>
+    <path d="M21 47v9M35 47v9M16 34l-7 10" stroke-width="3"/>
+    <path d="M37 31h17M45.5 22v18" stroke="#84D2FF" stroke-width="2.6"/>
+    <circle cx="45.5" cy="31" r="8.5" stroke="#84D2FF" stroke-width="2.2"/>
+    <circle cx="45.5" cy="31" r="2" fill="#E7F6FF" stroke="none"/>
+  </g>
+</svg>
+

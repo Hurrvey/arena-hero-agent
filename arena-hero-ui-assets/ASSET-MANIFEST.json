@@ -1,0 +1,33 @@
+{
+  "name": "Arena Hero Agent UI Assets",
+  "version": "1.0.0",
+  "theme": "dark-tactical",
+  "license": "GPL-3.0",
+  "recommendedFontStack": "Inter, Noto Sans SC, Microsoft YaHei, system-ui, sans-serif",
+  "colors": {
+    "background": "#07111F",
+    "panel": "#0D1B2C",
+    "friendly": "#2D9CFF",
+    "success": "#35D17C",
+    "beacon": "#FFC844",
+    "warning": "#FFB83E",
+    "danger": "#FF4D5F",
+    "obstacle": "#7F93A9"
+  },
+  "assets": [
+    {"id": "brand-logo-mark", "path": "brand/logo-mark.svg", "format": "svg", "defaultSize": 48},
+    {"id": "brand-logo-lockup", "path": "brand/logo-lockup.svg", "format": "svg", "defaultWidth": 280},
+    {"id": "entity-core", "path": "entities/core.svg", "spriteId": "entity-core", "defaultSize": 44},
+    {"id": "entity-worker", "path": "entities/worker.svg", "spriteId": "entity-worker", "defaultSize": 30},
+    {"id": "entity-vanguard", "path": "entities/vanguard.svg", "spriteId": "entity-vanguard", "defaultSize": 32},
+    {"id": "entity-ranger", "path": "entities/ranger.svg", "spriteId": "entity-ranger", "defaultSize": 32},
+    {"id": "map-beacon", "path": "map/beacon.svg", "spriteId": "map-beacon", "defaultSize": 40},
+    {"id": "map-resource", "path": "map/resource-crystal.svg", "spriteId": "map-resource", "defaultSize": 26},
+    {"id": "map-obstacle", "path": "map/obstacle.svg", "spriteId": "map-obstacle", "defaultSize": 32},
+    {"id": "map-risk-cell", "path": "map/risk-cell.svg", "format": "svg", "defaultSize": 32},
+    {"id": "map-grid-tile", "path": "map/grid-tile.svg", "format": "svg", "defaultSize": 32},
+    {"id": "ui-symbol-sprite", "path": "icons/ui-symbols.svg", "format": "svg-symbol-sprite"},
+    {"id": "design-tokens", "path": "styles/tokens.css", "format": "css"},
+    {"id": "dashboard-reference", "path": "reference/dashboard-ui-concept.png", "format": "png", "dimensions": [1672, 941]}
+  ]
+}

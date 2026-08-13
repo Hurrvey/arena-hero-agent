@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 64" role="img" aria-labelledby="title desc">
+  <title id="title">Arena Hero Agent</title>
+  <desc id="desc">Arena Hero Agent brand lockup.</desc>
+  <defs>
+    <linearGradient id="shell" x1="8" y1="8" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#44B8FF"/><stop offset="1" stop-color="#0877E6"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 4 56 17.5v29L32 60 8 46.5v-29L32 4Z" fill="#07111F" stroke="url(#shell)" stroke-width="4"/>
+  <path d="M32 11.5 49.5 21v21L32 52.5 14.5 42V21L32 11.5Z" fill="#102D4D" stroke="#92D7FF" stroke-width="1.5"/>
+  <path d="m32 18 11 10-4.2 16H25.2L21 28l11-10Z" fill="#2693FF"/>
+  <path d="m32 23 6.2 5.7-2.4 9.1h-7.6l-2.4-9.1L32 23Z" fill="#E8F6FF"/>
+  <text x="76" y="39" fill="#F2F7FC" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="750" letter-spacing="1.1">ARENA HERO AGENT</text>
+</svg>
+

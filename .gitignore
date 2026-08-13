@@ -1,7 +1,13 @@
 .worktrees/
+.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
 .codex_tmp/
 /adaptive/
+/data/
+.coverage
+htmlcov/
+test-results/
+playwright-report/

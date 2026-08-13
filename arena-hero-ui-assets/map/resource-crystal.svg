@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Resource</title>
+  <desc id="desc">Green resource crystal cluster.</desc>
+  <g stroke="#35D17C" stroke-linejoin="round">
+    <path d="m18 29 9-15 8 15-8 20-9-20Z" fill="#146B43" stroke-width="2.2"/>
+    <path d="m33 36 8-19 10 16-5 18-13-15Z" fill="#198652" stroke-width="2.2"/>
+    <path d="m10 40 7-11 8 13-5 12-10-14Z" fill="#105A38" stroke-width="2"/>
+    <path d="M27 14v35M41 17l5 34M17 29l3 25" fill="none" stroke="#89F0B8" stroke-width="1.5" opacity=".8"/>
+    <path d="M8 55h46" fill="none" stroke="#1B8C56" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+</svg>
+

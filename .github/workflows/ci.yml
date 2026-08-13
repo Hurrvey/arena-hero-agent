@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --group dev
+      - run: uv run python -m compileall -q app tests
+      - run: uv run ruff format --check app tests
+      - run: uv run ruff check app tests
+      - run: uv run bandit -q -r app
+      - run: uv run python -m pytest -q
+      - run: uv run python -m pip check
+      - name: Guard local runtime data
+        shell: bash
+        run: |
+          test -z "$(git ls-files -- .env adaptive data)"
+          git diff --check

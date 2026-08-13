@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Vanguard</title>
+  <desc id="desc">Vanguard tactical map marker with shield.</desc>
+  <g fill="none" stroke="#2D9CFF" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="26" cy="15" r="6" fill="#1B69A7" stroke-width="2.4"/>
+    <path d="M15 32c0-6.5 5-11 11-11s11 4.5 11 11v15H15V32Z" fill="#123B63" stroke-width="2.4"/>
+    <path d="M20 47v9M32 47v9M15 32 9 43" stroke-width="3"/>
+    <path d="m44 20 11 5v10c0 9-4.7 16-11 20-6.3-4-11-11-11-20V25l11-5Z" fill="#174E7F" stroke="#84D2FF" stroke-width="2.4"/>
+    <path d="M44 27v19M38 35h12" stroke="#E7F6FF" stroke-width="2"/>
+  </g>
+</svg>
+

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Arena Hero Agent logo</title>
+  <desc id="desc">A blue hexagonal shield surrounding a tactical diamond.</desc>
+  <defs>
+    <linearGradient id="shell" x1="10" y1="8" x2="52" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#44B8FF"/>
+      <stop offset="1" stop-color="#0877E6"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <path d="M32 4 56 17.5v29L32 60 8 46.5v-29L32 4Z" fill="#07111F" stroke="url(#shell)" stroke-width="4" filter="url(#glow)"/>
+  <path d="M32 11.5 49.5 21v21L32 52.5 14.5 42V21L32 11.5Z" fill="#102D4D" stroke="#92D7FF" stroke-width="1.5"/>
+  <path d="m32 18 11 10-4.2 16H25.2L21 28l11-10Z" fill="#2693FF"/>
+  <path d="m32 23 6.2 5.7-2.4 9.1h-7.6l-2.4-9.1L32 23Z" fill="#E8F6FF"/>
+  <path d="M32 27v8M28 31h8" stroke="#0877E6" stroke-width="2" stroke-linecap="round"/>
+</svg>
+

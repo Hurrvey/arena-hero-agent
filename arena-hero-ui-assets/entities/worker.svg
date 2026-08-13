@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Worker</title>
+  <desc id="desc">Worker tactical map marker.</desc>
+  <g fill="none" stroke="#2D9CFF" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="17" r="7" fill="#1B69A7" stroke-width="2.4"/>
+    <path d="M20 35c0-7 5.4-12 12-12s12 5 12 12v12H20V35Z" fill="#123B63" stroke-width="2.4"/>
+    <path d="M24 47v9M40 47v9M19 34l-7 10M45 34l7 10" stroke-width="3"/>
+    <path d="m42 18 8-8M45 9l6 6M42 18l-5 5" stroke="#84D2FF" stroke-width="2.6"/>
+    <path d="M27 31h10v9H27z" fill="#2693FF" stroke-width="1.8"/>
+  </g>
+</svg>
+

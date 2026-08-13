@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Obstacle</title>
+  <desc id="desc">Permanent gray obstacle tile.</desc>
+  <g stroke="#7F93A9" stroke-linejoin="round">
+    <path d="m8 20 12-8 12 7-3 16H12L8 20Z" fill="#4A5867" stroke-width="2"/>
+    <path d="m29 18 15-8 12 10-5 16H33l-4-18Z" fill="#596877" stroke-width="2"/>
+    <path d="m13 36 16-6 10 8-3 15H16l-3-17Z" fill="#53616F" stroke-width="2"/>
+    <path d="m37 36 13-5 7 9-5 14H34l3-18Z" fill="#414F5E" stroke-width="2"/>
+    <path d="m14 20 10 2M38 18l10 4M20 42l11 2M41 42l9 2" stroke="#A6B2BE" stroke-width="1.5" stroke-linecap="round" opacity=".8"/>
+  </g>
+</svg>
+

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">High risk cell</title>
+  <desc id="desc">Semi-transparent red danger overlay for a map cell.</desc>
+  <defs>
+    <pattern id="stripes" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="5" height="10" fill="#FF4D5F" opacity=".13"/>
+    </pattern>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="4" fill="#FF4D5F" opacity=".12" stroke="#FF4D5F" stroke-width="2"/>
+  <rect x="2" y="2" width="60" height="60" rx="4" fill="url(#stripes)"/>
+</svg>
+
