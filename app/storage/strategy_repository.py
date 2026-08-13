@@ -78,6 +78,16 @@ class StrategyRepository:
             raise LookupError(f"unknown strategy revision: {revision}")
         return _record(row)
 
+    def history(self, *, limit: int = 100) -> list[StrategyRevision]:
+        if not 1 <= limit <= 500:
+            raise ValueError("strategy history limit is invalid")
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"{_SELECT} ORDER BY revision DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [_record(row) for row in rows]
+
     def create_revision(
         self,
         *,

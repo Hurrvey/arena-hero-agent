@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.errors import AppError
 from app.storage.strategy_repository import RevisionConflict
-from strategy_policy import StrategyProfile
+from strategy_policy import PROFILE_BOUNDS, PROFILE_INT_BOUNDS, StrategyProfile
 
 router = APIRouter(prefix="/api/v1")
 
@@ -51,16 +51,40 @@ def update_strategy(payload: StrategyUpdate, request: Request) -> dict[str, obje
             reason=payload.reason,
         )
     except RevisionConflict as exc:
+        current = request.app.state.services.strategies.current()
+        pending = request.app.state.services.strategies.pending()
         raise AppError(
             "STRATEGY_REVISION_CONFLICT",
             "The active strategy changed or another revision is pending",
             409,
+            {
+                "current": _public(current),
+                "pending": _public(pending) if pending is not None else None,
+            },
         ) from exc
     return _public(revision)
 
 
 @router.get("/strategy/history")
 def history(request: Request) -> dict[str, object]:
-    current = request.app.state.services.strategies.current()
-    pending = request.app.state.services.strategies.pending()
-    return {"items": [_public(item) for item in (current, pending) if item is not None]}
+    return {
+        "items": [
+            _public(item) for item in request.app.state.services.strategies.history()
+        ]
+    }
+
+
+@router.get("/strategy/schema")
+def schema() -> dict[str, object]:
+    fields: dict[str, object] = {
+        name: {"minimum": bounds[0], "maximum": bounds[1], "kind": "number"}
+        for name, bounds in PROFILE_BOUNDS.items()
+    }
+    fields.update(
+        {
+            name: {"minimum": bounds[0], "maximum": bounds[1], "kind": "integer"}
+            for name, bounds in PROFILE_INT_BOUNDS.items()
+        }
+    )
+    fields["schema_version"] = {"minimum": 1, "maximum": 1, "kind": "integer"}
+    return {"schemaVersion": 1, "fields": fields}

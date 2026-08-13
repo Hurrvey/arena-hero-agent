@@ -200,6 +200,17 @@ class RuntimeStore:
             ).fetchone()
         return json.loads(row[0]) if row is not None else None
 
+    def state_at(self, session_id: str, tick: int) -> dict[str, object] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT public_payload_json FROM turn_snapshots
+                WHERE session_id = ? AND tick = ?
+                """,
+                (session_id, tick),
+            ).fetchone()
+        return json.loads(row[0]) if row is not None else None
+
     def current_plan(self, session_id: str) -> dict[str, object] | None:
         with self.database.connect() as connection:
             row = connection.execute(
@@ -217,3 +228,50 @@ class RuntimeStore:
             "status": row[2],
             "tick": row[3],
         }
+
+    def plan_at(self, session_id: str, tick: int) -> dict[str, object] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT public_plan_json, explanation_json, status, receipt_json
+                FROM plans WHERE session_id = ? AND tick = ?
+                """,
+                (session_id, tick),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "plan": json.loads(row[0]),
+            "explanation": json.loads(row[1]),
+            "status": str(row[2]),
+            "receipt": json.loads(row[3]) if row[3] else None,
+            "tick": tick,
+        }
+
+    def event_markers(
+        self,
+        session_id: str | None = None,
+        *,
+        limit: int = 300,
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("event marker limit is invalid")
+        where = "WHERE tick IS NOT NULL"
+        parameters: tuple[object, ...]
+        if session_id is None:
+            parameters = (limit,)
+        else:
+            where += " AND session_id = ?"
+            parameters = (session_id, limit)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT tick, event_type, created_at FROM service_events
+                {where} ORDER BY seq DESC LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+        return [
+            {"tick": int(row[0]), "eventType": str(row[1]), "createdAt": str(row[2])}
+            for row in reversed(rows)
+        ]

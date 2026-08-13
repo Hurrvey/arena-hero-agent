@@ -6,7 +6,13 @@ from dataclasses import dataclass
 
 from app.config import Settings
 from app.runtime.models import RuntimeSnapshot, RuntimeStatus
-from app.storage import Database, RuntimeStore, StrategyRepository
+from app.storage import (
+    AdaptiveRepository,
+    Database,
+    MetricsRepository,
+    RuntimeStore,
+    StrategyRepository,
+)
 
 
 class StoppedManager:
@@ -32,6 +38,8 @@ class Services:
     database: Database
     runtime_store: RuntimeStore
     strategies: StrategyRepository
+    metrics: MetricsRepository
+    adaptive: AdaptiveRepository
     runtime_manager: object
     broadcaster: object
     session_id: str | None = None

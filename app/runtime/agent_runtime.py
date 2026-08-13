@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from inspect import signature
 from threading import Event, RLock, Thread, current_thread
 from uuid import uuid4
 
@@ -185,7 +186,12 @@ class AgentRuntime:
             return
         if tick in self._observed_while_paused:
             return
-        result = self._planner(turn, self._memory, self._profile_provider())
+        provider = self._profile_provider
+        if signature(provider).parameters:
+            profile = provider(tick)
+        else:
+            profile = provider()
+        result = self._planner(turn, self._memory, profile)
         receipt = turn.submit()
         self._submitted_ticks.add(tick)
         batch = RuntimeBatch("TURN_SUBMITTED", tick, turn, result, receipt, "AGENT")

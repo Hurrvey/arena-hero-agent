@@ -1,15 +1,20 @@
-"""History metric endpoints."""
+"""SQLite-backed history metric endpoints."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/metrics/summary")
-def summary() -> dict[str, object]:
-    return {"ticks": 0, "resources": 0, "beaconTicks": 0}
+def summary(request: Request) -> dict[str, object]:
+    services = request.app.state.services
+    return services.metrics.summary(services.session_id)
 
 
 @router.get("/metrics/series")
-def series() -> dict[str, object]:
-    return {"points": []}
+def series(request: Request) -> dict[str, object]:
+    services = request.app.state.services
+    return {
+        "points": services.metrics.series(services.session_id),
+        "markers": services.runtime_store.event_markers(services.session_id),
+    }

@@ -63,3 +63,32 @@ class AdaptiveRepository:
             normalized,
             status,
         )
+
+    def windows(self, *, limit: int = 100) -> list[AdaptiveWindow]:
+        if not 1 <= limit <= 500:
+            raise ValueError("adaptive window limit is invalid")
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT cycle_id, start_tick, end_tick, sample_count,
+                       base_revision, candidate_revision, skill_fingerprint,
+                       raw_score, normalized_score, status
+                FROM adaptive_cycles ORDER BY end_tick DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            AdaptiveWindow(
+                cycle_id=str(row[0]),
+                start_tick=int(row[1]),
+                end_tick=int(row[2]),
+                sample_count=int(row[3]),
+                base_revision=int(row[4]),
+                candidate_revision=int(row[5]) if row[5] is not None else None,
+                skill_fingerprint=str(row[6]),
+                raw_score=float(row[7]),
+                normalized_score=float(row[8]),
+                status=str(row[9]),
+            )
+            for row in rows
+        ]

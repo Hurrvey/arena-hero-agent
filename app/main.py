@@ -14,13 +14,20 @@ from fastapi.staticfiles import StaticFiles
 from strategy_policy import StrategyProfile
 
 from .api import adaptive, agent, metrics, state, strategy, websocket
+from .api import settings as settings_api
 from .api.dependencies import Services
 from .api.websocket import CommittedEventBroadcaster
 from .config import Settings
 from .errors import AppError
 from .runtime.models import RuntimeConflict
 from .runtime.service_factory import build_runtime_manager
-from .storage import Database, RuntimeStore, StrategyRepository
+from .storage import (
+    AdaptiveRepository,
+    Database,
+    MetricsRepository,
+    RuntimeStore,
+    StrategyRepository,
+)
 
 
 def _error_payload(
@@ -46,6 +53,8 @@ def create_app(
     database = injected.get("database") or Database(configured.database_path)
     runtime_store = injected.get("runtime_store") or RuntimeStore(database)
     strategies = injected.get("strategies") or StrategyRepository(database)
+    metrics_repository = injected.get("metrics") or MetricsRepository(database)
+    adaptive_repository = injected.get("adaptive") or AdaptiveRepository(database)
     broadcaster = injected.get("broadcaster") or CommittedEventBroadcaster(
         configured.websocket_client_queue
     )
@@ -57,6 +66,7 @@ def create_app(
             settings=configured,
             runtime_store=runtime_store,
             strategies=strategies,
+            metrics=metrics_repository,
             broadcaster=broadcaster,
         )
     container = Services(
@@ -64,6 +74,8 @@ def create_app(
         database,
         runtime_store,
         strategies,
+        metrics_repository,
+        adaptive_repository,
         runtime_manager,
         broadcaster,
         runtime_factory=runtime_factory,
@@ -136,6 +148,7 @@ def create_app(
     app.include_router(strategy.router)
     app.include_router(adaptive.router)
     app.include_router(metrics.router)
+    app.include_router(settings_api.router)
     app.include_router(websocket.router)
 
     if configured.asset_directory.is_dir():

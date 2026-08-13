@@ -29,6 +29,18 @@ def current_plan(request: Request) -> dict[str, object]:
     return plan
 
 
+@router.get("/history/{tick}")
+def history_tick(tick: int, request: Request) -> dict[str, object]:
+    services = request.app.state.services
+    if not services.session_id:
+        raise AppError("HISTORY_NOT_AVAILABLE", "No runtime session is available", 404)
+    state = services.runtime_store.state_at(services.session_id, tick)
+    plan = services.runtime_store.plan_at(services.session_id, tick)
+    if state is None:
+        raise AppError("HISTORY_NOT_AVAILABLE", "The requested Tick is not retained", 404)
+    return {"tick": tick, "state": state, "plan": plan}
+
+
 @router.get("/events")
 def events(
     request: Request,

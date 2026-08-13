@@ -29,8 +29,13 @@ export class ApiClient {
   plan() { return this.request("/plan/current"); }
   events(afterSeq = 0) { return this.request(`/events?afterSeq=${afterSeq}&limit=300`); }
   metrics() { return this.request("/metrics/summary"); }
+  metricSeries() { return this.request("/metrics/series"); }
   strategy() { return this.request("/strategy"); }
+  strategySchema() { return this.request("/strategy/schema"); }
   adaptive() { return this.request("/adaptive/status"); }
+  adaptiveReports() { return this.request("/adaptive/reports"); }
+  settings() { return this.request("/settings"); }
+  historyTick(tick) { return this.request(`/history/${encodeURIComponent(tick)}`); }
   control(action) { return this.request(`/agent/${action}`, { method: "POST" }); }
   saveStrategy(payload) {
     return this.request("/strategy", { method: "PUT", body: JSON.stringify(payload) });

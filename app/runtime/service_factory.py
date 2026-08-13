@@ -8,7 +8,7 @@ from threading import RLock
 from adaptive_strategy import AdaptiveCoordinator, load_dotenv
 from app.errors import AppError
 from app.observability.redaction import PublicIdMapper
-from app.storage import RuntimeStore, StrategyRepository
+from app.storage import MetricsRepository, RuntimeStore, StrategyRepository
 from app.strategy.planner_adapter import plan_turn
 
 from .agent_runtime import AgentRuntime
@@ -20,11 +20,18 @@ from .serialization import json_value, serialize_turn
 
 class RuntimeServicesFactory:
     def __init__(
-        self, *, settings, runtime_store: RuntimeStore, strategies: StrategyRepository, broadcaster
+        self,
+        *,
+        settings,
+        runtime_store: RuntimeStore,
+        strategies: StrategyRepository,
+        metrics: MetricsRepository,
+        broadcaster,
     ) -> None:
         self.settings = settings
         self.runtime_store = runtime_store
         self.strategies = strategies
+        self.metrics = metrics
         self.broadcaster = broadcaster
         self._lock = RLock()
         self._session_id: str | None = None
@@ -55,11 +62,16 @@ class RuntimeServicesFactory:
             api_key=api_key,
             client_factory=sdk_client_factory,
             planner=plan_turn,
-            profile_provider=lambda: self.strategies.current().profile,
+            profile_provider=self.profile_for_tick,
             persistence=self.persist,
             adaptive_observer=self.observe_adaptive,
             lock_directory=self.settings.lock_directory,
         )
+
+    def profile_for_tick(self, tick: int | None = None):
+        if tick is not None:
+            self.strategies.activate_pending(tick=tick)
+        return self.strategies.current().profile
 
     def persist(self, batch: RuntimeBatch) -> None:
         with self._lock:
@@ -110,6 +122,11 @@ class RuntimeServicesFactory:
             )
         for event in events:
             self.broadcaster.publish_committed(_service_event(event))
+        self.metrics.save(
+            session_id,
+            int(batch.tick or 0),
+            _metric_values(public_state),
+        )
 
     def observe_adaptive(self, turn, receipt, result) -> None:
         coordinator = self._coordinator
@@ -122,11 +139,12 @@ class RuntimeServicesFactory:
             coordinator.observe(turn, receipt)
 
 
-def build_runtime_manager(*, settings, runtime_store, strategies, broadcaster):
+def build_runtime_manager(*, settings, runtime_store, strategies, metrics, broadcaster):
     factory = RuntimeServicesFactory(
         settings=settings,
         runtime_store=runtime_store,
         strategies=strategies,
+        metrics=metrics,
         broadcaster=broadcaster,
     )
     return RuntimeManager(factory.build), factory
@@ -141,4 +159,27 @@ def _service_event(event) -> dict[str, object]:
         "eventType": event.event_type,
         "payload": event.payload,
         "createdAt": event.created_at,
+    }
+
+
+def _metric_values(state: dict[str, object]) -> dict[str, float]:
+    units = state.get("units")
+    population = state.get("population")
+    if population is None and isinstance(units, list):
+        population = len(units)
+    beacon = state.get("beacon")
+    beacon_owned = 0.0
+    if isinstance(beacon, dict):
+        status = str(beacon.get("status", "")).upper()
+        carrier = beacon.get("carrierId", beacon.get("carrier_id"))
+        own_ids = {
+            str(item.get("id"))
+            for item in ([state.get("core")] + (units if isinstance(units, list) else []))
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        beacon_owned = float(status == "CARRIED" and str(carrier) in own_ids)
+    return {
+        "resources": float(state.get("resources", 0) or 0),
+        "population": float(population or 0),
+        "beaconOwned": beacon_owned,
     }

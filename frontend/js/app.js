@@ -7,8 +7,12 @@ import { renderEntityDetail } from "./components/entity-detail.js";
 import { renderUnitTable } from "./components/unit-table.js";
 import { TacticalMap } from "./map/tactical-map.js";
 import { renderOverview } from "./views/overview.js";
+import { installStrategy, renderStrategy } from "./views/strategy.js";
+import { renderAdaptive } from "./views/adaptive.js";
+import { installHistory, renderHistory } from "./views/history.js";
+import { renderSettings } from "./views/settings.js";
 
-const store = new AppStore(); const api = new ApiClient(); let tacticalMap = null; let liveConnection = null; let activeRoute = currentRoute();
+const store = new AppStore(); const api = new ApiClient(); let tacticalMap = null; let liveConnection = null; let activeRoute = currentRoute(); let routeNonce = 0;
 const main = document.querySelector("#route-view"); const header = document.querySelector("#runtime-strip"); const banner = document.querySelector("#connection-banner");
 
 async function bootstrap() {
@@ -32,12 +36,35 @@ function render(route = activeRoute) {
   tacticalMap = null;
   activeRoute = route; document.querySelectorAll(".nav-link").forEach((link) => link.classList.toggle("active", link.getAttribute("href") === route));
   if (route === "/") renderOverview(main, store.snapshot);
-  else main.innerHTML = `<section class="panel"><div class="empty-state"><div><strong>${route.slice(1) || "overview"}</strong>该控制台页面将在下一阶段接入真实数据。</div></div></section>`;
+  else renderSecondary(route);
+  renderChrome();
+  if (route === "/") installOverview();
+}
+
+function renderChrome() {
   header.innerHTML = renderRuntimeHeader(store.snapshot.runtime, store.snapshot.connection);
   banner.classList.toggle("visible", store.snapshot.connection.stale); banner.textContent = store.snapshot.connection.stale ? "实时连接不可用；当前界面显示最后一次权威快照，敌军位置可能已过期。" : "";
   document.querySelector("#map-stale")?.classList.toggle("visible", store.snapshot.connection.stale);
-  if (route === "/") installOverview();
   updateControls();
+}
+
+async function renderSecondary(route) {
+  const nonce = ++routeNonce;
+  main.innerHTML = `<section class="panel"><div class="empty-state"><div><strong>正在读取本地数据</strong>从 SQLite 与安全配置接口加载。</div></div></section>`;
+  try {
+    if (route === "/strategy") {
+      const [strategy, schema] = await Promise.all([api.strategy(), api.strategySchema()]);
+      if (nonce !== routeNonce || activeRoute !== route) return;
+      store.snapshot = { ...store.snapshot, strategy }; renderStrategy(main, strategy, schema); installStrategy(main, strategy, api, store);
+    } else if (route === "/adaptive") {
+      const [status, reports] = await Promise.all([api.adaptive(), api.adaptiveReports()]);
+      if (nonce !== routeNonce || activeRoute !== route) return; renderAdaptive(main, status, reports);
+    } else if (route === "/history") {
+      const series = await api.metricSeries(); if (nonce !== routeNonce || activeRoute !== route) return; renderHistory(main, series); installHistory(main, api);
+    } else if (route === "/settings") {
+      const settings = await api.settings(); if (nonce !== routeNonce || activeRoute !== route) return; renderSettings(main, settings);
+    }
+  } catch (error) { if (nonce === routeNonce) main.innerHTML = `<section class="panel"><div class="empty-state"><div><strong>页面数据加载失败</strong>${error.message}</div></div></section>`; }
 }
 
 function installOverview() {
@@ -70,4 +97,4 @@ window.addEventListener("offline", () => {
   liveConnection?.socket?.close();
 });
 window.addEventListener("beforeunload", () => liveConnection?.stop());
-store.subscribe(() => render(activeRoute)); installRouter(render); bootstrap().catch((error) => { showToast(`初始化失败：${error.message}`); store.setConnection({ status:"ERROR", stale:true }); });
+store.subscribe(() => activeRoute === "/" ? render(activeRoute) : renderChrome()); installRouter(render); bootstrap().catch((error) => { showToast(`初始化失败：${error.message}`); store.setConnection({ status:"ERROR", stale:true }); });

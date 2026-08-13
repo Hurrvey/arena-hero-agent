@@ -20,6 +20,10 @@
   .right-stack { grid-template-columns:1fr; grid-template-rows:auto auto; }
   .action-row { grid-template-columns:75px 95px 1fr; }
   .action-row > :last-child { display:none; }
+  .strategy-layout { grid-template-columns:1fr; }
+  .sticky-review { position:static; }
+  .field-grid, .candidate-grid, .settings-grid { grid-template-columns:1fr; }
+  .adaptive-summary { grid-template-columns:1fr; }
 }
 @media (max-width: 480px) {
   .command-bar { grid-template-columns:1fr; }
@@ -33,4 +37,6 @@
   .map-panel { min-height:410px; }
   .map-legend { max-width:calc(100% - 24px); flex-wrap:wrap; }
   .panel-header { align-items:flex-start; padding:10px 12px; flex-direction:column; }
+  .page-heading { align-items:flex-start; flex-direction:column; }
+  .score-grid { grid-template-columns:1fr; }
 }
