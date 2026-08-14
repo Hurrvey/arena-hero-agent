@@ -186,6 +186,20 @@ class RuntimeServicesFactory:
             public_state["defenseLevel"] = str(
                 batch.result.diagnostics.defense.get("level", "CLEAR")
             ).upper()
+            public_state["contact"] = {
+                "level": str(
+                    batch.result.diagnostics.contact.get("level", "NONE")
+                ).upper(),
+                "visibleEnemyCount": int(
+                    batch.result.diagnostics.contact.get("visible_enemy_count", 0)
+                ),
+                "respondingUnitCount": int(
+                    batch.result.diagnostics.contact.get(
+                        "responding_combat_units",
+                        0,
+                    )
+                ),
+            }
             events = self.runtime_store.save_turn_batch(
                 session_id=session_id,
                 tick=int(batch.tick or 0),

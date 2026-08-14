@@ -363,7 +363,13 @@ def test_post_submit_persistence_publishes_current_visibility_and_revision(tmp_p
         tick=7,
         plan={"tick": 7},
         explanation=DecisionExplanation(),
-        diagnostics=PlannerDiagnostics(),
+        diagnostics=PlannerDiagnostics(
+            contact={
+                "level": "THREATENING",
+                "visible_enemy_count": 2,
+                "responding_combat_units": 1,
+            }
+        ),
     )
 
     factory.persist(
@@ -382,4 +388,9 @@ def test_post_submit_persistence_publishes_current_visibility_and_revision(tmp_p
         "tick": 7,
         "currentCells": [[1, 1], [2, 1]],
         "explorationRevision": 4,
+    }
+    assert runtime_store.current_state(session.session_id)["contact"] == {
+        "level": "THREATENING",
+        "visibleEnemyCount": 2,
+        "respondingUnitCount": 1,
     }

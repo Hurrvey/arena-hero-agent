@@ -99,7 +99,11 @@ def _build_explanation(
         acted_ids.add(_raw_id(core.id))
     for identifier, reason in sorted(reason_codes.items(), key=lambda item: _raw_id(item[0])):
         entity_id = _raw_id(identifier)
-        if entity_id in acted_ids or reason != "SCOUT_WAIT_NO_SAFE_FRONTIER":
+        if entity_id in acted_ids or reason not in {
+            "SCOUT_WAIT_NO_SAFE_FRONTIER",
+            "CONTACT_WAIT_NO_SAFE_RESPONSE",
+            "DEFENSE_HOLD",
+        }:
             continue
         actions.append(
             DecisionAction(

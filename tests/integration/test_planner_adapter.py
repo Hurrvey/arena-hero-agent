@@ -5,7 +5,7 @@ from arena_hero import Direction, UnitType
 from arena_hero.actions import CommandPlan, MoveAction
 
 from app.strategy.planner import DecisionAction, DecisionExplanation, PlannerDiagnostics
-from app.strategy.planner_adapter import apply_planner_result, plan_turn
+from app.strategy.planner_adapter import _build_explanation, apply_planner_result, plan_turn
 from balanced_tactic import TacticMemory
 from strategy_policy import StrategyProfile
 
@@ -112,6 +112,20 @@ def test_frontier_reason_is_preserved_in_public_explanation() -> None:
     assert result.explanation.actions
     assert result.explanation.actions[0].reason_code == "SCOUT_FRONTIER"
     assert result.diagnostics.exploration["frontier_assignments"] == 1
+
+
+def test_contact_wait_is_explanation_only_and_consumes_no_action() -> None:
+    turn = fake_turn()
+    worker = turn.units[0]
+    memory = TacticMemory()
+    memory.planned_reason_codes[worker.id] = "CONTACT_WAIT_NO_SAFE_RESPONSE"
+    plan = SimpleNamespace(unit_actions={}, core_action=None)
+
+    explanation = _build_explanation(turn, plan, memory)
+
+    assert len(explanation.actions) == 1
+    assert explanation.actions[0].action_type == "WAIT"
+    assert explanation.actions[0].reason_code == "CONTACT_WAIT_NO_SAFE_RESPONSE"
 
 
 def test_validation_failure_degrades_one_entity_to_wait_without_second_submit() -> None:

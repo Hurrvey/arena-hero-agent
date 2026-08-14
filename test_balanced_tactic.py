@@ -3321,19 +3321,11 @@ def test_worker_waits_when_every_frontier_route_is_blocked_or_attacked() -> None
         hp=2,
         unit_type=UnitType.WORKER,
     )
-    enemy = SimpleNamespace(
-        id=UUID(int=200),
-        kind="UNIT",
-        unit_type=UnitType.VANGUARD,
-        position=(0, 3),
-        hp=4,
-    )
     turn = make_turn(
         core=core,
         units=(worker,),
-        enemies=(enemy,),
         resources=0,
-        obstacle_cells={(1, 1), (-1, 1)},
+        obstacle_cells={(1, 1), (-1, 1), (0, 2)},
         beacon=SimpleNamespace(
             position=(100, 100),
             status="CARRIED",
@@ -3349,3 +3341,252 @@ def test_worker_waits_when_every_frontier_route_is_blocked_or_attacked() -> None
 
     assert worker.actions == []
     assert memory.planned_reason_codes[worker.id] == "SCOUT_WAIT_NO_SAFE_FRONTIER"
+
+
+def test_remote_enemy_threatening_workers_triggers_evasion_and_ranger_interception() -> None:
+    core = FakeController(object_id=UUID(int=100), position=(0, 0), hp=5, shield=5)
+    worker = FakeController(
+        object_id=UUID(int=1),
+        position=(-7, -9),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    ranger = FakeController(
+        object_id=UUID(int=2),
+        position=(2, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    guard = FakeController(
+        object_id=UUID(int=3),
+        position=(1, 0),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    enemy = SimpleNamespace(
+        id=UUID(int=200),
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        position=(-10, -9),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker, ranger, guard),
+        enemies=(enemy,),
+        resources=0,
+        beacon=SimpleNamespace(
+            position=(100, 100),
+            status=None,
+            carrier_id=None,
+        ),
+    )
+    memory = TacticMemory()
+
+    choose_actions(turn, memory)
+
+    assert worker.actions and worker.actions[-1][0] == "MOVE"
+    assert ranger.actions and ranger.actions[-1][0] == "MOVE"
+    assert guard.actions == []
+    assert memory.defense.level.name == "CLEAR"
+    assert memory.contact_assessment.level.name == "THREATENING"
+    assert memory.planned_reason_codes[worker.id] == "CONTACT_EVADE"
+    assert memory.planned_reason_codes[ranger.id] == "CONTACT_INTERCEPT"
+    assert memory.planned_reason_codes[guard.id] == "DEFENSE_HOLD"
+
+
+def test_approach_core_recall_overrides_remote_contact_interception() -> None:
+    core = FakeController(object_id=UUID(int=100), position=(0, 0), hp=5, shield=5)
+    ranger = FakeController(
+        object_id=UUID(int=2),
+        position=(8, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    guard = FakeController(
+        object_id=UUID(int=3),
+        position=(7, 0),
+        hp=4,
+        unit_type=UnitType.VANGUARD,
+    )
+    near_enemy = SimpleNamespace(
+        id=UUID(int=200),
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        position=(2, 0),
+        hp=4,
+    )
+    remote_enemy = SimpleNamespace(
+        id=UUID(int=201),
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        position=(12, 0),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger, guard),
+        enemies=(near_enemy, remote_enemy),
+        resources=0,
+        beacon=SimpleNamespace(
+            position=(100, 100),
+            status="CARRIED",
+            carrier_id=core.id,
+        ),
+    )
+    memory = TacticMemory()
+
+    choose_actions(turn, memory)
+
+    assert memory.defense.level.name in {"APPROACH", "ATTACK"}
+    assert ranger.actions and ranger.actions[-1][0] == "MOVE"
+    assert guard.actions and guard.actions[-1][0] == "MOVE"
+    assert memory.contact_response is None
+    assert memory.planned_reason_codes.get(ranger.id) != "CONTACT_INTERCEPT"
+    assert memory.planned_reason_codes.get(guard.id) != "CONTACT_INTERCEPT"
+
+
+def test_visible_enemy_in_legal_range_is_attacked_before_intercept_move() -> None:
+    core = FakeController(object_id=UUID(int=100), position=(0, 5), hp=5, shield=5)
+    ranger = FakeController(
+        object_id=UUID(int=2),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.RANGER,
+    )
+    enemy = SimpleNamespace(
+        id=UUID(int=200),
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        position=(3, 0),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(ranger,),
+        enemies=(enemy,),
+        resources=0,
+        beacon=SimpleNamespace(
+            position=(100, 100),
+            status=None,
+            carrier_id=None,
+        ),
+    )
+    memory = TacticMemory()
+
+    choose_actions(turn, memory)
+
+    assert ranger.actions and ranger.actions[-1][0] == "SHOOT"
+    assert memory.planned_reason_codes[ranger.id] == "CONTACT_ATTACK"
+
+
+def test_hidden_contact_uses_three_tick_move_only_investigation_then_expires() -> None:
+    memory = TacticMemory()
+    current_ranger_position = (2, 0)
+    current_worker_position = (-7, -9)
+    for tick in range(20, 25):
+        core = FakeController(
+            object_id=UUID(int=100),
+            position=(0, 0),
+            hp=5,
+            shield=5,
+        )
+        worker = FakeController(
+            object_id=UUID(int=1),
+            position=current_worker_position,
+            hp=2,
+            unit_type=UnitType.WORKER,
+        )
+        ranger = FakeController(
+            object_id=UUID(int=2),
+            position=current_ranger_position,
+            hp=2,
+            unit_type=UnitType.RANGER,
+        )
+        guard = FakeController(
+            object_id=UUID(int=3),
+            position=(1, 0),
+            hp=4,
+            unit_type=UnitType.VANGUARD,
+        )
+        enemies = ()
+        if tick == 20:
+            enemies = (
+                SimpleNamespace(
+                    id=UUID(int=200),
+                    kind="UNIT",
+                    unit_type=UnitType.RANGER,
+                    position=(-10, -9),
+                    hp=2,
+                ),
+            )
+        turn = make_turn(
+            core=core,
+            units=(worker, ranger, guard),
+            enemies=enemies,
+            resources=0,
+            beacon=SimpleNamespace(
+                position=(100, 100),
+                status=None,
+                carrier_id=None,
+            ),
+        )
+        turn.tick = tick
+        choose_actions(turn, memory)
+        if ranger.actions and ranger.actions[-1][0] == "MOVE":
+            dx, dy = ranger.actions[-1][1].delta
+            current_ranger_position = (
+                current_ranger_position[0] + dx,
+                current_ranger_position[1] + dy,
+            )
+        if worker.actions and worker.actions[-1][0] == "MOVE":
+            dx, dy = worker.actions[-1][1].delta
+            current_worker_position = (
+                current_worker_position[0] + dx,
+                current_worker_position[1] + dy,
+            )
+        if tick in {21, 22, 23}:
+            assert all(action[0] != "SHOOT" for action in ranger.actions)
+        if tick == 24:
+            assert memory.contact.enemy_id is None
+            assert memory.contact_response is None
+
+
+def test_no_legal_evasion_or_intercept_records_controlled_wait_reason() -> None:
+    core = FakeController(
+        object_id=UUID(int=100),
+        position=(10, 10),
+        hp=5,
+        shield=5,
+    )
+    worker = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 1),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    enemy = SimpleNamespace(
+        id=UUID(int=200),
+        kind="UNIT",
+        unit_type=UnitType.RANGER,
+        position=(0, 4),
+        hp=2,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        enemies=(enemy,),
+        resources=0,
+        obstacle_cells={(-1, 1), (1, 1), (0, 0)},
+        beacon=SimpleNamespace(
+            position=(100, 100),
+            status=None,
+            carrier_id=None,
+        ),
+    )
+    memory = TacticMemory()
+
+    choose_actions(turn, memory)
+
+    assert worker.actions == []
+    assert memory.planned_reason_codes[worker.id] == "CONTACT_WAIT_NO_SAFE_RESPONSE"

@@ -45,6 +45,18 @@ from defense_strategy import (
 )
 from strategy_policy import StrategyProfile
 from app.strategy.exploration import ExplorationMap
+from app.strategy.contact import (
+    ContactAssessment,
+    ContactLevel,
+    ContactMemory,
+    ContactResponse,
+    assess_contact,
+    choose_worker_evasion,
+    ranger_intercept_goal,
+    select_responder,
+    update_investigation,
+    vanguard_intercept_goal,
+)
 from app.strategy.frontier import (
     FrontierMemory,
     FrontierSettings,
@@ -79,6 +91,13 @@ UNIT_COSTS = UNIT_BASE_COSTS
 # There is no maintenance reserve in v0.14.  Keeping a zero-valued name makes
 # the policy's intent explicit for callers that imported the old constant.
 CORE_RESERVE = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Goal:
+    position: tuple[int, int]
+    retreat: bool = False
+    reason_code: str | None = None
 
 
 def _enum_name(value) -> str:
@@ -250,6 +269,12 @@ class TacticMemory:
     frontier: FrontierMemory = field(default_factory=FrontierMemory)
     planned_reason_codes: dict[object, str] = field(default_factory=dict)
     planned_reason_targets: dict[object, tuple[int, int]] = field(default_factory=dict)
+    contact: ContactMemory = field(default_factory=ContactMemory)
+    contact_assessment: ContactAssessment = field(
+        default_factory=ContactAssessment.none
+    )
+    contact_response: ContactResponse | None = None
+    contact_diagnostics: dict[str, object] = field(default_factory=dict)
     processed_event_ids: set[bytes] = field(default_factory=set)
     processed_event_order: list[bytes] = field(default_factory=list)
     policy: StrategyProfile = field(default_factory=StrategyProfile.default)
@@ -477,6 +502,223 @@ def _refresh_defender_roster(turn, memory: TacticMemory) -> None:
         carrier_id=getattr(carrier, "id", None),
         vanguard_target=int(memory.policy.defender_vanguard_target),
         ranger_target=int(memory.policy.defender_ranger_target),
+    )
+
+
+def _refresh_contact_state(turn, memory: TacticMemory) -> None:
+    """Assess remote visible combat without inflating Core defense state."""
+
+    core = getattr(turn, "core", None)
+    core_snapshot = None
+    if core is not None:
+        core_snapshot = EntitySnapshot(
+            entity_id=_uuid_key(core.id),
+            kind=EntityKind.CORE,
+            position=tuple(core.position),
+            hp=max(0, int(getattr(core, "hp", 0))),
+            shield=max(0, int(getattr(core, "shield", 0))),
+            controlled=True,
+        )
+    if core_snapshot is None:
+        memory.contact = ContactMemory()
+        memory.contact_assessment = ContactAssessment.none()
+        memory.contact_response = None
+        _update_contact_diagnostics(memory)
+        return
+    friendly_snapshots = tuple(
+        snapshot
+        for unit in getattr(turn, "units", ())
+        if (snapshot := _unit_snapshot(unit, controlled=True)) is not None
+    )
+    enemy_pairs = tuple(
+        (enemy, snapshot)
+        for enemy in getattr(turn, "visible_enemies", ())
+        if (snapshot := _unit_snapshot(enemy, controlled=False)) is not None
+        and snapshot.kind in {EntityKind.RANGER, EntityKind.VANGUARD}
+    )
+    carrier = _owned_beacon_carrier(turn, memory)
+    protected_ids = {
+        snapshot.entity_id
+        for snapshot in friendly_snapshots
+        if snapshot.kind is EntityKind.WORKER
+    }
+    if carrier is not None:
+        protected_ids.add(_uuid_key(carrier.id))
+    memory.contact_assessment = assess_contact(
+        core=core_snapshot,
+        friendlies=friendly_snapshots,
+        visible_enemies=tuple(snapshot for _, snapshot in enemy_pairs),
+        obstacles=frozenset(_obstacles_for(turn, memory)),
+        protected_friendly_ids=frozenset(protected_ids),
+    )
+
+    if memory.defense.level >= ThreatLevel.APPROACH:
+        memory.contact = ContactMemory()
+        memory.contact_response = None
+        _update_contact_diagnostics(memory)
+        return
+
+    selected_pair = None
+    if enemy_pairs:
+        workers = tuple(getattr(turn, "workers", ()))
+        cargo_workers = tuple(worker for worker in workers if int(worker.cargo or 0) > 0)
+        threatening_ids = memory.contact_assessment.threatening_enemy_ids
+
+        def rank(pair):
+            enemy, snapshot = pair
+            can_hit_carrier = bool(
+                carrier is not None
+                and _enemy_can_attack_cell(
+                    enemy,
+                    carrier.position,
+                    _obstacles_for(turn, memory),
+                )
+            )
+            can_hit_cargo = any(
+                _enemy_can_attack_cell(enemy, worker.position, _obstacles_for(turn, memory))
+                for worker in cargo_workers
+            )
+            can_hit_worker = any(
+                _enemy_can_attack_cell(enemy, worker.position, _obstacles_for(turn, memory))
+                for worker in workers
+            )
+            one_step = snapshot.entity_id in threatening_ids
+            worker_distance = min(
+                (_distance(snapshot.position, worker.position) for worker in workers),
+                default=10**9,
+            )
+            if memory.contact_assessment.level is ContactLevel.SPOTTED:
+                return (worker_distance, snapshot.hp, snapshot.entity_id)
+            return (
+                0 if can_hit_carrier else 1 if can_hit_cargo else 2 if can_hit_worker else 3 if one_step else 4,
+                snapshot.hp,
+                snapshot.entity_id,
+            )
+
+        selected_pair = min(enemy_pairs, key=rank)
+
+    responder_snapshot = None
+    if selected_pair is not None:
+        _, selected_snapshot = selected_pair
+        responder_snapshot = select_responder(
+            friendly_snapshots,
+            enemy=selected_snapshot,
+            contact_level=memory.contact_assessment.level,
+            core_position=_core_combat_position(core, turn, memory),
+            defender_ids=frozenset(
+                _uuid_key(identifier) for identifier in memory.defenders.all_ids
+            ),
+            core_defense_level=memory.defense.level,
+            obstacles=frozenset(_obstacles_for(turn, memory)),
+            carrier_id=_uuid_key(carrier.id) if carrier is not None else None,
+        )
+
+    if selected_pair is not None and responder_snapshot is not None:
+        _, selected_snapshot = selected_pair
+        update_investigation(
+            memory.contact,
+            tick=int(getattr(turn, "tick", 0)),
+            visible_threat=selected_snapshot,
+            responder_id=responder_snapshot.entity_id,
+        )
+        memory.contact_response = ContactResponse(
+            level=memory.contact_assessment.level,
+            responder_id=responder_snapshot.entity_id,
+            target_position=selected_snapshot.position,
+            threatened_worker_ids=frozenset(
+                identifier
+                for identifier in memory.contact_assessment.threatened_friendly_ids
+                if any(
+                    friendly.entity_id == identifier
+                    and friendly.kind is EntityKind.WORKER
+                    for friendly in friendly_snapshots
+                )
+            ),
+            reason_code="CONTACT_INTERCEPT",
+        )
+    elif selected_pair is not None:
+        _, selected_snapshot = selected_pair
+        memory.contact_response = ContactResponse(
+            level=memory.contact_assessment.level,
+            responder_id=None,
+            target_position=selected_snapshot.position,
+            threatened_worker_ids=frozenset(
+                identifier
+                for identifier in memory.contact_assessment.threatened_friendly_ids
+                if any(
+                    friendly.entity_id == identifier
+                    and friendly.kind is EntityKind.WORKER
+                    for friendly in friendly_snapshots
+                )
+            ),
+            reason_code=None,
+        )
+    elif not enemy_pairs and memory.contact.responder_id is not None:
+        alive_ids = {snapshot.entity_id for snapshot in friendly_snapshots}
+        responder_id = memory.contact.responder_id
+        investigation = update_investigation(
+            memory.contact,
+            tick=int(getattr(turn, "tick", 0)),
+            visible_threat=None,
+            responder_id=responder_id if responder_id in alive_ids else None,
+            current_visible_cells=memory.current_visible_cells,
+        )
+        memory.contact_response = (
+            ContactResponse(
+                level=ContactLevel.SPOTTED,
+                responder_id=responder_id,
+                target_position=investigation,
+                threatened_worker_ids=frozenset(),
+                reason_code="CONTACT_INVESTIGATE",
+            )
+            if investigation is not None
+            else None
+        )
+    else:
+        update_investigation(
+            memory.contact,
+            tick=int(getattr(turn, "tick", 0)),
+            visible_threat=None,
+            responder_id=None,
+            current_visible_cells=memory.current_visible_cells,
+        )
+        memory.contact_response = None
+    _update_contact_diagnostics(memory)
+
+
+def _update_contact_diagnostics(memory: TacticMemory) -> None:
+    memory.contact_diagnostics = {
+        "level": memory.contact_assessment.level.name,
+        "visible_enemy_count": len(memory.contact_assessment.visible_enemy_ids),
+        "threatened_workers": len(
+            memory.contact_response.threatened_worker_ids
+            if memory.contact_response is not None
+            else frozenset()
+        ),
+        "evading_workers": 0,
+        "responding_combat_units": int(
+            memory.contact_response is not None
+            and memory.contact_response.responder_id is not None
+        ),
+        "contact_attack_actions": 0,
+        "contact_investigation_ticks": int(
+            memory.contact_response is not None
+            and memory.contact_response.reason_code == "CONTACT_INVESTIGATE"
+        ),
+    }
+
+
+def _contact_increment(memory: TacticMemory, key: str) -> None:
+    memory.contact_diagnostics[key] = int(memory.contact_diagnostics.get(key, 0)) + 1
+
+
+def _is_selected_contact_target(memory: TacticMemory, unit, enemy) -> bool:
+    response = memory.contact_response
+    return bool(
+        response is not None
+        and response.reason_code == "CONTACT_INTERCEPT"
+        and response.responder_id == _uuid_key(unit.id)
+        and response.target_position == getattr(enemy, "position", None)
     )
 
 
@@ -1788,17 +2030,21 @@ def _defense_goal(unit, turn, memory: TacticMemory):
     core_position = _core_combat_position(core, turn, memory)
     distance = _distance(unit.position, core_position)
     if (selected or full_recall) and distance > maximum:
-        return core_position, False
+        return Goal(core_position, False, "DEFENSE_RECALL")
     if selected and distance < minimum:
         dx = unit.position[0] - core_position[0]
         dy = unit.position[1] - core_position[1]
         if dx == 0 and dy == 0:
-            return (core_position[0] + minimum, core_position[1]), False
+            return Goal(
+                (core_position[0] + minimum, core_position[1]),
+                False,
+                "DEFENSE_RING",
+            )
         goal = (
             core_position[0] + (minimum if dx > 0 else -minimum if dx < 0 else 0),
             core_position[1] + (minimum if dy > 0 else -minimum if dy < 0 else 0),
         )
-        return goal, False
+        return Goal(goal, False, "DEFENSE_RING")
     return None
 
 
@@ -1809,7 +2055,7 @@ def _combat_goal(unit, turn, memory: TacticMemory, runner):
 
     enemy_carrier = _visible_enemy_carrier(turn)
     if enemy_carrier is not None:
-        return enemy_carrier.position, False
+        return Goal(enemy_carrier.position, False)
 
     own_carrier = _owned_beacon_carrier(turn, memory)
     core_is_carrier = bool(
@@ -1821,15 +2067,89 @@ def _combat_goal(unit, turn, memory: TacticMemory, runner):
         if _same_id(unit.id, own_carrier.id):
             core = turn.core
             if core is not None and unit.position != core.position:
-                return core.position, True
+                return Goal(core.position, True)
             return None
         # When the Core carries the Beacon, a small assigned defense ring is
         # sufficient.  Pulling every combat Unit onto the Core would abandon
         # economy pressure and prevent production.
         if not core_is_carrier and _distance(unit.position, own_carrier.position) > 1:
-            return own_carrier.position, False
+            return Goal(own_carrier.position, False)
         if not core_is_carrier:
             return None
+
+    response = memory.contact_response
+    if response is not None and response.responder_id == _uuid_key(unit.id):
+        if response.reason_code == "CONTACT_INVESTIGATE":
+            if response.target_position is not None:
+                return Goal(
+                    response.target_position,
+                    False,
+                    "CONTACT_INVESTIGATE",
+                )
+            return None
+        target = next(
+            (
+                enemy
+                for enemy in getattr(turn, "visible_enemies", ())
+                if getattr(enemy, "position", None) == response.target_position
+                and _kind(enemy) in {"RANGER", "VANGUARD"}
+            ),
+            None,
+        )
+        unit_snapshot = _unit_snapshot(unit, controlled=True)
+        target_snapshot = (
+            _unit_snapshot(target, controlled=False) if target is not None else None
+        )
+        if unit_snapshot is None or target_snapshot is None:
+            return None
+        obstacles = frozenset(_obstacles_for(turn, memory))
+        occupied = frozenset(
+            position for _, position in _occupied(turn)
+        )
+        enemy_snapshots = tuple(
+            snapshot
+            for enemy in getattr(turn, "visible_enemies", ())
+            if (snapshot := _unit_snapshot(enemy, controlled=False)) is not None
+        )
+        risk_map = build_visible_risk_map(
+            _controlled_snapshots(turn),
+            enemy_snapshots,
+            obstacles,
+        )
+        if unit_snapshot.kind is EntityKind.RANGER:
+            intercept = ranger_intercept_goal(
+                unit_snapshot,
+                target_snapshot,
+                obstacles=obstacles,
+                occupied=occupied,
+                reserved=frozenset(),
+                risk_map=risk_map,
+            )
+        else:
+            protected_positions = [
+                friendly.position
+                for friendly in _controlled_snapshots(turn)
+                if friendly.entity_id in response.threatened_worker_ids
+            ]
+            intercept = vanguard_intercept_goal(
+                unit_snapshot,
+                target_snapshot,
+                threatened_position=(
+                    min(
+                        protected_positions,
+                        key=lambda position: _distance(position, target_snapshot.position),
+                    )
+                    if protected_positions
+                    else target_snapshot.position
+                ),
+                obstacles=obstacles,
+                occupied=occupied,
+                reserved=frozenset(),
+                risk_map=risk_map,
+            )
+        if intercept is not None and intercept != unit.position:
+            return Goal(intercept, False, "CONTACT_INTERCEPT")
+        return None
 
     if defense_goal is not None:
         return defense_goal
@@ -1846,15 +2166,16 @@ def _combat_goal(unit, turn, memory: TacticMemory, runner):
             enemy_cores,
             key=lambda enemy: (_enemy_effective_hp(enemy), _uuid_key(enemy.id)),
         )
-        return target.position, False
+        return Goal(target.position, False)
 
     if runner is not None:
         if _same_id(unit.id, runner.id):
-            return getattr(turn.beacon, "position", None), False
+            beacon_position = getattr(turn.beacon, "position", None)
+            return Goal(beacon_position, False) if beacon_position is not None else None
         # One combat escort follows the runner; the rest can continue probing
         # visible enemy territory once it appears.
         if _distance(unit.position, runner.position) > 2:
-            return runner.position, False
+            return Goal(runner.position, False)
     return None
 
 
@@ -1983,6 +2304,9 @@ def _queue_ranger_actions(
             else:
                 ranger.shoot_cell(target.position)
             acted.add(ranger.id)
+            if _is_selected_contact_target(memory, ranger, target):
+                _record_reason(memory, ranger.id, "CONTACT_ATTACK", target.position)
+                _contact_increment(memory, "contact_attack_actions")
             continue
 
         predicted = _predicted_cells(turn, ranger.position, memory)
@@ -2030,20 +2354,36 @@ def _queue_ranger_actions(
 
         goal = _combat_goal(ranger, turn, memory, runner)
         if goal is not None:
-            _record_move(
+            moved = _record_move(
                 ranger,
-                goal[0],
+                goal.position,
                 turn,
                 acted,
                 occupied,
                 reserved_destinations,
                 planned_from_core,
                 planned_into_core,
-                retreat=goal[1],
+                retreat=goal.retreat,
                 obstacles=obstacles,
                 planned_moves=planned_moves,
                 memory=memory,
             )
+            if moved and goal.reason_code is not None:
+                _record_reason(memory, ranger.id, goal.reason_code, goal.position)
+            elif not moved and goal.reason_code is not None:
+                _record_reason(
+                    memory,
+                    ranger.id,
+                    "CONTACT_WAIT_NO_SAFE_RESPONSE",
+                    goal.position,
+                )
+        elif (
+            memory.contact_response is not None
+            and memory.contact_response.responder_id == _uuid_key(ranger.id)
+        ):
+            _record_reason(memory, ranger.id, "CONTACT_WAIT_NO_SAFE_RESPONSE")
+        elif _id_in(ranger.id, memory.defenders.all_ids):
+            _record_reason(memory, ranger.id, "DEFENSE_HOLD")
 
 
 def _queue_vanguard_actions(
@@ -2172,6 +2512,23 @@ def _queue_vanguard_actions(
             _, direction = min(candidates, key=lambda item: item[0])
             vanguard.sweep(direction)
             acted.add(vanguard.id)
+            swept_cell = _step(vanguard.position, direction)
+            selected = next(
+                (
+                    enemy
+                    for enemy in by_cell.get(swept_cell, ())
+                    if _is_selected_contact_target(memory, vanguard, enemy)
+                ),
+                None,
+            )
+            if selected is not None:
+                _record_reason(
+                    memory,
+                    vanguard.id,
+                    "CONTACT_ATTACK",
+                    selected.position,
+                )
+                _contact_increment(memory, "contact_attack_actions")
             continue
 
         # v0.14 permits an empty sweep.  Use it only for a cell an observed
@@ -2231,20 +2588,36 @@ def _queue_vanguard_actions(
 
         goal = _combat_goal(vanguard, turn, memory, runner)
         if goal is not None:
-            _record_move(
+            moved = _record_move(
                 vanguard,
-                goal[0],
+                goal.position,
                 turn,
                 acted,
                 occupied,
                 reserved_destinations,
                 planned_from_core,
                 planned_into_core,
-                retreat=goal[1],
+                retreat=goal.retreat,
                 obstacles=obstacles,
                 planned_moves=planned_moves,
                 memory=memory,
             )
+            if moved and goal.reason_code is not None:
+                _record_reason(memory, vanguard.id, goal.reason_code, goal.position)
+            elif not moved and goal.reason_code is not None:
+                _record_reason(
+                    memory,
+                    vanguard.id,
+                    "CONTACT_WAIT_NO_SAFE_RESPONSE",
+                    goal.position,
+                )
+        elif (
+            memory.contact_response is not None
+            and memory.contact_response.responder_id == _uuid_key(vanguard.id)
+        ):
+            _record_reason(memory, vanguard.id, "CONTACT_WAIT_NO_SAFE_RESPONSE")
+        elif _id_in(vanguard.id, memory.defenders.all_ids):
+            _record_reason(memory, vanguard.id, "DEFENSE_HOLD")
 
 
 def _queue_worker_actions(
@@ -2486,9 +2859,57 @@ def _queue_worker_actions(
                 reserved_destinations,
             )
         )
+        contact_no_safe_response = False
+        if (
+            not is_carrier
+            and not is_runner
+            and memory.defense.level < ThreatLevel.APPROACH
+            and _uuid_key(worker.id)
+            in (
+                memory.contact_response.threatened_worker_ids
+                if memory.contact_response is not None
+                else frozenset()
+            )
+        ):
+            worker_snapshot = _unit_snapshot(worker, controlled=True)
+            enemy_snapshots = tuple(
+                snapshot
+                for enemy in getattr(turn, "visible_enemies", ())
+                if (snapshot := _unit_snapshot(enemy, controlled=False)) is not None
+            )
+            evasion = (
+                choose_worker_evasion(
+                    worker_snapshot,
+                    visible_enemies=enemy_snapshots,
+                    obstacles=frozenset(obstacles),
+                    occupied=frozenset(position for _, position in occupied),
+                    reserved=frozenset(reserved_destinations),
+                    core_position=core_position,
+                )
+                if worker_snapshot is not None
+                else None
+            )
+            if evasion is not None and _queue_frontier_step(
+                worker,
+                evasion,
+                turn,
+                acted,
+                occupied,
+                reserved_destinations,
+                planned_from_core,
+                planned_into_core,
+                obstacles=obstacles,
+                planned_moves=planned_moves,
+                memory=memory,
+            ):
+                _record_reason(memory, worker.id, "CONTACT_EVADE", evasion)
+                _contact_increment(memory, "evading_workers")
+                continue
+            contact_no_safe_response = True
         defensive_evacuation = bool(
             not is_carrier
             and not is_runner
+            and not contact_no_safe_response
             and memory.defense.level >= ThreatLevel.ATTACK
             and _distance(worker.position, core_position)
             <= int(memory.policy.worker_evacuation_radius)
@@ -2703,6 +3124,10 @@ def _queue_worker_actions(
                 claimed_resources.add(worker.position)
                 acted.add(worker.id)
                 continue
+
+        if contact_no_safe_response:
+            _record_reason(memory, worker.id, "CONTACT_WAIT_NO_SAFE_RESPONSE")
+            continue
 
         goal: tuple[int, int] | None = None
         frontier_assignment = None
@@ -3304,6 +3729,10 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     memory.worker_evacuations = 0
     if turn.core is None:
         _refresh_defense_state(turn, memory)
+        memory.contact = ContactMemory()
+        memory.contact_assessment = ContactAssessment.none()
+        memory.contact_response = None
+        _update_contact_diagnostics(memory)
         memory.economy_diagnostics = {
             "visible_resource_count": len(
                 set(getattr(turn, "resource_cells", ()) or ())
@@ -3367,6 +3796,7 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
     core_action_selected = _queue_beacon_pickup(turn, memory, acted, False)
     own_carrier = _owned_beacon_carrier(turn, memory)
     _refresh_defender_roster(turn, memory)
+    _refresh_contact_state(turn, memory)
     # The submitted pickup is not reflected in this Turn's authoritative view
     # yet.  Treat the selected controlled object as the prospective carrier so
     # we do not assign a second runner or spend its action on economy.
