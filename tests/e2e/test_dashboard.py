@@ -20,6 +20,11 @@ def install_api_mocks(page: Page) -> None:
         "resourceCells": [[5, 4], [7, 4], [18, 12]],
         "obstacleCells": [[10, 5], [10, 6], [10, 7]],
         "beacon": {"position": [22, 3], "status": "GROUND"},
+        "visibility": {
+            "tick": 1234,
+            "currentCells": [[12, 8], [13, 8], [13, 12], [16, 6], [20, 6]],
+            "explorationRevision": 4,
+        },
     }
     plan = {
         "tick": 1234,
@@ -69,6 +74,17 @@ def install_api_mocks(page: Page) -> None:
         if request_url.query:
             url += "?" + request_url.query
         payload = payloads.get(url)
+        if payload is None and url.startswith("/api/v1/exploration?"):
+            payload = {
+                "revision": 4,
+                "bounds": {"minX": 0, "minY": 0, "maxX": 30, "maxY": 20},
+                "exploredCells": [
+                    [x, y]
+                    for x in range(4, 24)
+                    for y in range(2, 14)
+                ],
+                "knownObstacleCells": [[10, 5], [10, 6], [10, 7]],
+            }
         if payload is None and url.startswith("/api/v1/events"):
             payload = {"events": [], "lastSeq": 1}
         route.fulfill(status=200, content_type="application/json", body=json.dumps(payload or {}))
@@ -120,3 +136,52 @@ def test_disconnected_snapshot_is_visibly_stale(page: Page, live_server_url: str
     expect(page.get_by_text("运行中")).to_be_visible()
     page.context.set_offline(True)
     expect(page.get_by_text("显示最后一次权威快照", exact=False)).to_be_visible()
+
+
+def test_dashboard_labels_current_explored_and_unknown_fog(
+    page: Page,
+    live_server_url: str,
+) -> None:
+    install_api_mocks(page)
+    page.goto(live_server_url + "/")
+
+    expect(page.get_by_text("当前可见", exact=True)).to_be_visible()
+    expect(page.get_by_text("已探索", exact=True)).to_be_visible()
+    expect(page.get_by_text("未探索", exact=True)).to_be_visible()
+    expect(page.locator("#map-description")).to_contain_text(
+        "已探索不代表当前安全"
+    )
+
+
+def test_tactical_map_has_three_visually_distinct_fog_states(
+    page: Page,
+    live_server_url: str,
+) -> None:
+    install_api_mocks(page)
+    page.goto(live_server_url + "/")
+    expect(page.locator("#map-description")).to_contain_text("已探索暗区 235 格")
+
+    luminance = page.locator("#tactical-map").evaluate(
+        """canvas => {
+          const rect = canvas.getBoundingClientRect();
+          const scaleX = canvas.width / rect.width;
+          const scaleY = canvas.height / rect.height;
+          const center = [canvas.width / 2, canvas.height / 2];
+          const origin = [12, 8];
+          const cell = 30;
+          const sample = ([x, y]) => {
+            const px = Math.round(center[0] + (x - origin[0]) * cell * scaleX + 5);
+            const py = Math.round(center[1] + (y - origin[1]) * cell * scaleY + 5);
+            const [r, g, b] = canvas.getContext("2d").getImageData(px, py, 1, 1).data;
+            return .2126 * r + .7152 * g + .0722 * b;
+          };
+          return {
+            visible: sample([13, 12]),
+            explored: sample([14, 12]),
+            unknown: sample([14, 14]),
+          };
+        }"""
+    )
+
+    assert luminance["visible"] >= luminance["explored"] + 10
+    assert luminance["explored"] >= luminance["unknown"] + 6

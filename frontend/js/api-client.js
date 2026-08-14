@@ -38,6 +38,23 @@ export class ApiClient {
   adaptiveReports() { return this.request("/adaptive/reports"); }
   settings() { return this.request("/settings"); }
   historyTick(tick) { return this.request(`/history/${encodeURIComponent(tick)}`); }
+  async exploration(bounds, etag = null) {
+    const query = new URLSearchParams({
+      minX: String(bounds.minX),
+      minY: String(bounds.minY),
+      maxX: String(bounds.maxX),
+      maxY: String(bounds.maxY),
+    });
+    const headers = etag ? { "If-None-Match": etag } : {};
+    const response = await fetch(`${this.base}/exploration?${query}`, {
+      credentials: "same-origin",
+      headers,
+    });
+    if (response.status === 304) return { notModified: true, etag };
+    const payload = await response.json();
+    if (!response.ok) throw new ApiError(response.status, payload);
+    return { payload, etag: response.headers.get("etag") };
+  }
   decideCandidate(candidateId, payload) { return this.request(`/adaptive/candidates/${encodeURIComponent(candidateId)}`, { method:"POST", body:JSON.stringify(payload) }); }
   control(action) { return this.request(`/agent/${action}`, { method: "POST" }); }
   saveStrategy(payload) {

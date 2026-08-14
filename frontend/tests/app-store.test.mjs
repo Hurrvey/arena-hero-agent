@@ -81,3 +81,21 @@ test("SDK object snapshot is normalized for the dashboard", () => {
   assert.equal(store.snapshot.state.resourceCapacity, 45);
   assert.equal(store.snapshot.state.beacon.status, "GROUND");
 });
+
+test("authoritative visibility survives normalization without deriving history", () => {
+  const store = new AppStore();
+  const visibility = {
+    tick: 23,
+    currentCells: [[1, 2], [2, 2]],
+    explorationRevision: 8,
+  };
+
+  store.replaceFromRest({
+    tick: 23,
+    visibility,
+    objects: [{ kind: "OBSTACLE", positions: [[9, 9]] }],
+  }, null, 0);
+
+  assert.deepEqual(store.snapshot.state.visibility, visibility);
+  assert.equal(store.snapshot.state.exploredCells, undefined);
+});

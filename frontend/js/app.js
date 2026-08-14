@@ -12,8 +12,9 @@ import { installAdaptive, renderAdaptive } from "./views/adaptive.js";
 import { installHistory, renderHistory } from "./views/history.js";
 import { renderSettings } from "./views/settings.js";
 import { decorateStateWithPlan } from "./map/plan-routes.js";
+import { ExplorationCache } from "./map/exploration-cache.js";
 
-const store = new AppStore(); const api = new ApiClient(); let tacticalMap = null; let liveConnection = null; let activeRoute = currentRoute(); let routeNonce = 0;
+const store = new AppStore(); const api = new ApiClient(); const explorationCache = new ExplorationCache(); let tacticalMap = null; let liveConnection = null; let activeRoute = currentRoute(); let routeNonce = 0;
 const main = document.querySelector("#route-view"); const header = document.querySelector("#runtime-strip"); const banner = document.querySelector("#connection-banner");
 
 async function bootstrap() {
@@ -71,7 +72,19 @@ async function renderSecondary(route) {
 function installOverview() {
   const presented = overviewSnapshot();
   const canvas = document.querySelector("#tactical-map");
-  tacticalMap = new TacticalMap(canvas, document.querySelector("#map-description"), (entity) => { const detail = document.querySelector("#entity-detail"); detail.innerHTML = renderEntityDetail(entity); detail.hidden = false; });
+  const runtimeId = store.snapshot.runtime?.runtimeId || "";
+  explorationCache.reset(runtimeId);
+  tacticalMap = new TacticalMap(canvas, document.querySelector("#map-description"), (entity) => { const detail = document.querySelector("#entity-detail"); detail.innerHTML = renderEntityDetail(entity); detail.hidden = false; }, async (bounds) => {
+    const requestedRuntime = store.snapshot.runtime?.runtimeId || "";
+    explorationCache.reset(requestedRuntime);
+    const etag = explorationCache.etag(requestedRuntime, bounds);
+    const result = await api.exploration(bounds, etag);
+    if ((store.snapshot.runtime?.runtimeId || "") !== requestedRuntime) return null;
+    if (!result.notModified) {
+      explorationCache.replace(requestedRuntime, bounds, result.payload, result.etag);
+    }
+    return explorationCache.entry(requestedRuntime, bounds);
+  });
   tacticalMap.update(presented.state);
   document.querySelectorAll("[data-map]").forEach((button) => button.addEventListener("click", () => { const action = button.dataset.map; if (action === "home") { tacticalMap.hasAnchor = false; tacticalMap.update(presented.state); } else { tacticalMap.camera.zoomBy(action === "in" ? .2 : -.2); tacticalMap.render(); } }));
   document.querySelectorAll("[data-filter]").forEach((tab) => tab.addEventListener("click", () => { document.querySelectorAll("[data-filter]").forEach((item) => item.classList.toggle("active", item === tab)); document.querySelector("#unit-table").innerHTML = renderUnitTable(store.snapshot.state, tab.dataset.filter); }));
