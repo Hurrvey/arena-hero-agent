@@ -20,7 +20,9 @@
 - **载体保命与护卫**：只把当前 Turn 明确可见的己方 carrier 当作事实；状态进入迷雾时按未知处理，避免把过期 carrier 当成 10 点 shield cap；可见威胁会触发回 Core、护卫或在 Core 同格预排战后 HEAL。
 - **机会型高分战斗**：Ranger 优先敌方 Beacon carrier、威胁己方 carrier 的单位和敌方 Core，直接目标不足时向由可见敌人一步移动推导的合法空格射击；Vanguard 同理使用预测 Sweep。
 - **四级动态 Core 防御圈**：可见战斗单位会被分为 `WATCH`、`APPROACH`、`ATTACK`、`LETHAL`。平时只保留 1 Vanguard + 2 Ranger 的小型常备守军；敌军一步后可形成攻击位时，非载体战斗单位回防并切换战时生产；当前 Core 攻击者会被提权，致命攻击者优先于敌方 Core。
-- **Worker 经济与探索**：成熟目标为 23 名 Worker。可见/短期记忆资源通过确定性的最小成本一对一分配；没有资源时，空载 Worker 按八方向递增环分散侦察，不再返回 Core 原地或在两格之间永久往返。载货 Worker 仍优先返航存入，受威胁时撤退。
+- **持久探索与真实边界侦察**：当前可见区域保持明亮；曾经探索但当前不可见的区域保留为深色历史地形；从未探索区域保持近乎不透明。探索进度按 Arena 账号隔离并跨重启保存，只保存探索/永久障碍位，不保存敌人、资源或 Beacon 归属。
+- **抗振荡 Worker 路由**：成熟目标为 23 名 Worker。可见/短期记忆资源通过确定性的最小成本一对一分配；空载 Worker 领取真正连接未知区域的 frontier 租约；两格往返、短周期重复和失败边触发 tabu/cooldown，无法推进时明确 WAIT，而不是制造假进度。载货 Worker 仍优先返航存入。
+- **接敌与 Core 防御分层**：Core `APPROACH+` 永远优先回防；Core 安全时，受威胁 Worker 先撤离，Ranger 优先拦截，至少一名 Vanguard 留守，敌人消失后只移动调查 3 Tick，绝不按旧 UUID 盲射。
 - **分阶段扩军**：生产价格使用官方 `unit_cost()`，依次建设 6 Worker → 1 Vanguard → 1 Ranger → 12 Worker → 3 Vanguard → 4 Ranger → 23 Worker，随后按 Ranger 偏重比例继续扩大战斗力；容量不足时选择当前能够容纳的类型。
 - **受约束的确定性记忆**：永久障碍可以长期记忆；资源提示有 64 Tick TTL，路线有停滞阈值和冷却。carrier 仅使用当前可见状态或同 Tick 拾取计划，不把迷雾里的敌人、资源或 Beacon 归属当作当前事实。
 - **确定性决策**：相同状态下使用固定方向顺序和 UUID 排序，减少同局行为漂移。
@@ -121,7 +123,11 @@ cd D:\arena-hero
 
 页面“暂停”会继续接收并保存权威 Turn，但不提交 AGENT 计划；恢复后只从下一次新 Tick 继续，不补交暂停期间错过的旧 Tick。“停止”会关闭 SDK 并释放账户锁。
 
-地图只把当前 Turn 可见的对象画成事实：可见资源消失会立即失效，迷雾区域表示“未知”而不是“没有敌人/资源”。策略内部的短期资源记忆只参与受规则约束的寻路，不会被前端伪装成当前可见事实。计划的 `ACCEPTED` 表示服务已接收；下一 Turn 到达后，上一 Tick 的私有结果会独立保存为 `RESOLVED`，可在历史页查看，二者不会混为同一状态。
+地图使用三种明确状态：当前可见区域为明亮网格，曾经探索但当前不可见的区域为深色历史地形，从未探索区域近乎不透明。当前可见资源消失会立即失效；历史区域只保留永久障碍，不保留敌人、资源或 Beacon 归属。Beacon 坐标按官方规则始终公开，但状态和 carrier 在不可见时显示为未知。策略内部的短期资源记忆只参与受规则约束的寻路，不会被前端伪装成当前可见事实。计划的 `ACCEPTED` 表示服务已接收；下一 Turn 到达后，上一 Tick 的私有结果会独立保存为 `RESOLVED`，可在历史页查看，二者不会混为同一状态。
+
+探索历史使用 `SHA-256(API Key)` 派生的本地账号作用域隔离并存入 SQLite，原始 API key 不进入数据库、REST、WebSocket、DOM 或 LLM 提示。`GET /api/v1/exploration?minX=&minY=&maxX=&maxY=` 返回至多 96×96 的 `explored`、`currentVisible`、`obstacle` 位图和单调 `revision`；账号作用域由服务端当前运行配置决定，调用方不能指定。
+
+总览页的威胁卡同时显示两条互不混淆的状态：`Core` 防御等级表示本体安全，`接敌`等级表示前沿当前可见敌情和响应单位数。地图与诊断不会把历史敌情当作当前事实。
 
 ### CLI 兼容入口
 
@@ -150,10 +156,10 @@ tick=124 accepted=True
 
 默认情况下脚本只运行确定性的 `balanced_tactic.py`，不会连接任何 LLM。打开自适应模式后，主战术仍然是唯一的行动权威：每个 Turn 先根据当前可见状态生成并提交一份完整计划，提交完成后才把脱敏遥测写入本地队列。到达 Tick/时间间隔后，后台线程才启动两阶段循环：
 
-1. **评估模型**读取仓库内置的 `skills/arena-hero` v0.14 完整规则/SDK 包、聚合事件和 Beacon/经济/防御/战斗 scorecard，输出缺陷、规则风险和改进建议。它会看到零资源 Tick、空闲 Worker、路线停滞、两格振荡、runner 推进、Core 威胁/致命暴露、实际 Core 伤害、守军覆盖和 Worker 疏散等指标。
+1. **评估模型**读取仓库内置的 `skills/arena-hero` v0.14 完整规则/SDK 包、聚合事件和 Beacon/经济/防御/战斗 scorecard，输出缺陷、规则风险和改进建议。它会看到零资源 Tick、空闲 Worker、frontier 推进、振荡检测/拦截、runner 推进、接敌等级/响应计数、Core 威胁/致命暴露、实际 Core 伤害、守军覆盖和 Worker 疏散等指标。
 2. **重设计模型**读取完全相同且带 SHA-256 指纹的项目内规则包、当前 `StrategyProfile` 和上一步评估，只能输出有限 JSON 参数（Worker 目标、经济启动规模、Beacon 任务半径/租约、资源 TTL/停滞阈值、战斗倾向、载体安全余量、常备守军规模、观察圈和 Worker 疏散半径等）。它不能提交行动、写 Python、执行 Shell 或读取迷雾信息；系统不会执行 LLM 生成的 Python。
 
-候选参数会写入 SQLite，并做 schema、范围、最低样本数、规则指纹、当前策略 revision 和 `LETHAL` 防御状态校验。默认 `ARENA_HERO_ADAPTIVE_AUTO_APPLY=0`，由控制台人工应用；通过的候选只创建 `PENDING` revision，并在下一 Turn 规划前原子激活。LLM 只接收有界聚合对象/行动计数和事件数值，不接收玩家名、对象 ID、精确坐标、路线、原始计划或提示词。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。它只是调参信号，不是官方总榜，也不能保证固定第一名。
+候选参数会写入 SQLite，并做 schema、范围、最低样本数、规则指纹、当前策略 revision 和 `LETHAL` 防御状态校验。默认 `ARENA_HERO_ADAPTIVE_AUTO_APPLY=0`，由控制台人工应用；通过的候选只创建 `PENDING` revision，并在下一 Turn 规划前原子激活。LLM 只接收有界聚合对象/行动计数、探索计数、接敌等级/计数和事件数值，不接收玩家名、对象 ID、精确坐标、路线、frontier 租约、chunk mask、账号作用域、原始计划或提示词。LLM 超时、网络错误、skill 文件缺失、指纹不匹配或 JSON 不合法都会保留旧策略，并且不会中断主战术。它只是调参信号，不是官方总榜，也不能保证固定第一名。
 
 ### 本地 `.env` 配置（推荐）
 
@@ -217,15 +223,15 @@ Web Runtime 的新状态统一位于 `data/arena_hero_agent.db`；旧版根目�
 | Core | 静止时才接受存入、治疗、修盾或生产；无 upkeep，价格通过 `unit_cost(unit_type, population)` 计算，不主动发起迁移。 |
 | Ranger | 致命 Core 攻击者 > 敌方 Beacon carrier > 威胁己方 carrier 的敌人 > 其他 Core 攻击/逼近者 > 敌方 Core；对 carrier/Core 使用精确目标射击。被选为守军时保持 Core 2–3 格防区。 |
 | Vanguard | 使用相同目标层级 Sweep 相邻格；被选为守军时保持 Core 1–2 格防区。无威胁时只保留小型守军，其余单位继续护送、抢 Beacon 和进攻。 |
-| Worker | 生存/载货返航 > 当前格采集 > 一对一资源路线 > 八方向环形侦察；己方 carrier 优先保命/回 Core。Core 正在受击且 Worker 也处于近 Core 火线时，优先移到当前可见攻击数为 0 的侧翼。 |
+| Worker | carrier 生存 > 严格更安全的接敌规避 > 载货返航 > 当前格采集 > 一对一资源路线 > frontier 租约探索；失败边和短周期往返进入 cooldown，找不到安全前沿时明确 WAIT。Core 正在受击且 Worker 也处于近 Core 火线时，Core 防御优先。 |
 | Beacon | 只有当前状态为 `GROUND` 且同格才拾取；远程任务通常要等 6 Worker 经济启动，近距离可见地面 Beacon 可机会性抢取；状态未知时不猜测 carrier 或 ground。 |
 
 每个 Turn 的高层优先级是：
 
 1. 处理同格 Beacon 拾取和 carrier 生存动作。
 2. 计算 Core `CLEAR/WATCH/APPROACH/ATTACK/LETHAL` 状态；致命攻击者优先清除，逼近时召回战斗单位。
-3. 处理敌方 Beacon carrier、威胁己方 carrier 的敌人、其他 Core 攻击者和敌方 Core。
-4. 维持 Worker 存入、采集、独占资源分配与分散探索；Core 火线上的受威胁 Worker 改向安全侧翼疏散。
+3. 处理敌方 Beacon carrier、威胁己方 carrier 的敌人、其他 Core 攻击者和敌方 Core；Core 为 `CLEAR/WATCH` 时才允许 Ranger 前沿拦截，并保留至少一名 Vanguard 守军。
+4. 维持 Worker 存入、采集、独占资源分配与 frontier 探索；接敌 Worker 只向当前攻击数严格下降的格子规避，无安全响应时明确 WAIT；敌人消失后最多调查 3 Tick 且只移动不盲射。
 5. 为 Core HP、可预见的非致命伤害和 Beacon carrier 恢复预留资源；普通 Unit heal 只使用剩余预算。
 6. 无威胁时按 6W → 1V1R → 12W → 3V4R → 23W 扩军；`APPROACH+` 暂停 Worker，优先补足 1 Vanguard + 2 Ranger 守军并继续补战斗单位。
 
@@ -277,11 +283,11 @@ python -m pip install pytest
 - Ranger 射击范围、对齐和障碍判断。
 - Vanguard 相邻目标选择。
 - Core 五级威胁分类、Ranger 障碍射线、守军稳定选择、致命攻击者优先、回防、战时生产和 Worker 安全侧翼疏散。
-- Worker 采集、存入、最小成本一对一分配、八方向探索、TTL、卡路冷却、两格振荡恢复和受威胁撤退。
+- Worker 采集、存入、最小成本一对一分配、持久 frontier 租约、TTL、tabu/cooldown、两格/短周期振荡拦截、接敌规避和受控 WAIT。
 - 单位/Core 恢复（含战后预防性 HEAL）、有租期 Beacon runner/carrier、分阶段 23/3/4 扩军、预测射击/扫击和动态生产价格。
 - Core 移动时禁止存入和生产。
 - API key 不被打印，以及每个 Turn 只提交一次计划。
-- 项目内置 Arena Hero skill 的完整性/优先级、两阶段 evaluator/designer 规则指纹、聚合经济/防御评分、LLM 提示脱敏、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
+- 项目内置 Arena Hero skill 的完整性/优先级、两阶段 evaluator/designer 规则指纹、聚合经济/防御/探索/接敌评分上下文、LLM 提示脱敏、JSON/范围校验、提示长度上限、金丝雀回滚和自适应故障 fail-open。
 - FastAPI/SQLite/REST/WebSocket 契约、`ACCEPTED` 与 `RESOLVED` 生命周期、10,000 Tick 有界长跑、静态素材 MIME、安全头和 Chromium 真实浏览器响应式布局。
 
 也可以运行依赖和差异检查：
@@ -370,7 +376,9 @@ git push -u origin main
 | --- | --- |
 | [balanced_tactic.py](balanced_tactic.py) | 战术决策、API key 读取和持续运行入口。 |
 | [defense_strategy.py](defense_strategy.py) | 当前可见 Core 威胁分级、攻击几何和确定性守军选择。 |
-| [economic_strategy.py](economic_strategy.py) | 有界资源记忆、一对一分配、环形侦察、路线进度与 runner 租约。 |
+| [economic_strategy.py](economic_strategy.py) | 有界资源记忆、一对一分配、路线进度与 runner 租约。 |
+| [app/strategy/frontier.py](app/strategy/frontier.py) | frontier 提取、确定性租约、有界 A*、tabu/cooldown 与振荡拦截。 |
+| [app/strategy/contact.py](app/strategy/contact.py) | 当前可见接敌分级、Worker 规避、单响应者拦截与三 Tick 调查。 |
 | [strategy_policy.py](strategy_policy.py) | 有范围约束的 `StrategyProfile` 与 Beacon/经济 score 计算。 |
 | [adaptive_strategy.py](adaptive_strategy.py) | 脱敏遥测、规则指纹、双 LLM 协调器、金丝雀回滚与禁用模式。 |
 | [app](app) | FastAPI、Runtime、SQLite、策略模块、自适应安全层与 REST/WebSocket API。 |
