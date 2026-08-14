@@ -96,6 +96,24 @@ def test_defense_diagnostic_uses_named_threat_level() -> None:
     assert result.diagnostics.defense["level"] == "CLEAR"
 
 
+def test_frontier_reason_is_preserved_in_public_explanation() -> None:
+    turn = fake_turn()
+    turn.resource_cells = frozenset()
+    turn.beacon = SimpleNamespace(
+        position=(100, 100),
+        status="CARRIED",
+        carrier_id=turn.core.id,
+    )
+    turn.core.shield = 10
+    memory = TacticMemory()
+
+    result = plan_turn(turn, memory, StrategyProfile.default())
+
+    assert result.explanation.actions
+    assert result.explanation.actions[0].reason_code == "SCOUT_FRONTIER"
+    assert result.diagnostics.exploration["frontier_assignments"] == 1
+
+
 def test_validation_failure_degrades_one_entity_to_wait_without_second_submit() -> None:
     entity_id = UUID(int=1)
     result = SimpleNamespace(

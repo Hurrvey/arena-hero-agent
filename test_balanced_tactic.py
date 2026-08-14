@@ -153,6 +153,18 @@ def make_turn(
     )
 
 
+def explore_square(memory: TacticMemory, radius: int = 4) -> None:
+    memory.exploration.observe(
+        visible_cells=frozenset(
+            (x, y)
+            for x in range(-radius, radius + 1)
+            for y in range(-radius, radius + 1)
+        ),
+        visible_obstacles=frozenset(),
+        tick=1,
+    )
+
+
 def test_respawning_turn_queues_no_invented_actions() -> None:
     turn = make_turn(core=None)
 
@@ -1572,15 +1584,13 @@ def test_unknown_remote_beacon_does_not_lease_worker_before_bootstrap() -> None:
         beacon=SimpleNamespace(position=(8, 5), status=None, carrier_id=None),
     )
 
-    choose_actions(turn)
-
-    assert worker.actions == [("MOVE", Direction.RIGHT)]
-    assert all(action[0] != "PICKUP_BEACON" for action in worker.actions)
-    # The economic scout also moves right on its first slot, but it must not be
-    # permanently leased to a hidden/moving Beacon before six Workers exist.
     memory = TacticMemory()
     choose_actions(turn, memory)
+
+    assert worker.actions and worker.actions[-1][0] == "MOVE"
+    assert all(action[0] != "PICKUP_BEACON" for action in worker.actions)
     assert memory.runner_id is None
+    assert memory.planned_reason_codes[worker.id] == "SCOUT_FRONTIER"
 
 
 def test_runner_harvests_current_resource_before_resuming_beacon_route() -> None:
@@ -2403,9 +2413,11 @@ def test_core_cell_worker_scouts_without_visible_resources() -> None:
         beacon=SimpleNamespace(position=(0, 0), status="CARRIED", carrier_id=core.id),
     )
 
-    choose_actions(turn)
+    memory = TacticMemory()
+    choose_actions(turn, memory)
 
-    assert worker.actions == [("MOVE", Direction.RIGHT)]
+    assert worker.actions and worker.actions[-1][0] == "MOVE"
+    assert memory.planned_reason_codes[worker.id] == "SCOUT_FRONTIER"
     assert core.actions == []
 
 
@@ -2435,10 +2447,11 @@ def test_two_empty_workers_without_visible_resources_explore_distinctly() -> Non
         beacon=SimpleNamespace(position=(100, 100), status=None, carrier_id=None),
     )
 
-    choose_actions(turn, TacticMemory())
+    memory = TacticMemory()
+    choose_actions(turn, memory)
 
-    assert first.actions == [("MOVE", Direction.RIGHT)]
-    assert second.actions == [("MOVE", Direction.RIGHT)]
+    assert all(unit.actions and unit.actions[-1][0] == "MOVE" for unit in (first, second))
+    assert memory.planned_reason_targets[first.id] != memory.planned_reason_targets[second.id]
 
 
 def test_visible_resource_targets_are_unique_across_workers() -> None:
@@ -2527,8 +2540,8 @@ def test_two_cell_worker_oscillation_changes_scout_route() -> None:
         turn.tick = tick
         choose_actions(turn, memory)
 
-    assert memory.economy.scout_stages[unit.id.bytes] == 1
-    assert unit.actions == [("MOVE", Direction.DOWN)]
+    assert memory.frontier.oscillation_detections >= 1
+    assert unit.actions and unit.actions[-1] != ("MOVE", Direction.RIGHT)
 
 
 def test_idle_combat_unit_vacates_core_for_affordable_spawn() -> None:
@@ -3213,3 +3226,126 @@ def test_deposit_is_deferred_when_visible_death_would_destroy_overflow() -> None
     choose_actions(turn)
 
     assert ("DEPOSIT",) not in depositor.actions
+
+
+def test_idle_workers_move_to_distinct_real_frontiers_not_radial_fallbacks() -> None:
+    core = FakeController(
+        object_id=UUID(int=100),
+        position=(0, 0),
+        hp=5,
+        shield=10,
+    )
+    first = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 1),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    second = FakeController(
+        object_id=UUID(int=2),
+        position=(1, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(first, second),
+        resources=0,
+        beacon=SimpleNamespace(
+            position=(100, 100),
+            status="CARRIED",
+            carrier_id=core.id,
+        ),
+    )
+    memory = TacticMemory()
+    explore_square(memory)
+    memory.exploration_observed_tick = turn.tick
+    memory.current_visible_cells = frozenset(
+        {core.position, first.position, second.position}
+    )
+
+    choose_actions(turn, memory)
+
+    assert all(unit.actions[-1][0] == "MOVE" for unit in (first, second))
+    assert memory.planned_reason_codes[first.id] == "SCOUT_FRONTIER"
+    assert memory.planned_reason_codes[second.id] == "SCOUT_FRONTIER"
+    assert memory.planned_reason_targets[first.id] != memory.planned_reason_targets[second.id]
+
+
+def test_worker_does_not_repeat_a_b_a_after_oscillation_is_observed() -> None:
+    memory = TacticMemory()
+    explore_square(memory)
+    worker_id = UUID(int=1)
+    for tick, position in enumerate(((0, 0), (1, 0), (0, 0)), start=10):
+        core = FakeController(
+            object_id=UUID(int=100),
+            position=(0, 2),
+            hp=5,
+            shield=10,
+        )
+        worker = FakeController(
+            object_id=worker_id,
+            position=position,
+            hp=2,
+            unit_type=UnitType.WORKER,
+        )
+        turn = make_turn(
+            core=core,
+            units=(worker,),
+            resources=0,
+            beacon=SimpleNamespace(
+                position=(100, 100),
+                status="CARRIED",
+                carrier_id=core.id,
+            ),
+        )
+        turn.tick = tick
+        memory.exploration_observed_tick = tick
+        memory.current_visible_cells = frozenset({position, core.position})
+        choose_actions(turn, memory)
+
+    assert worker.actions == [] or worker.actions[-1] != ("MOVE", Direction.RIGHT)
+    assert memory.exploration_diagnostics["oscillation_detections"] >= 1
+
+
+def test_worker_waits_when_every_frontier_route_is_blocked_or_attacked() -> None:
+    core = FakeController(
+        object_id=UUID(int=100),
+        position=(0, 0),
+        hp=5,
+        shield=10,
+    )
+    worker = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 1),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    enemy = SimpleNamespace(
+        id=UUID(int=200),
+        kind="UNIT",
+        unit_type=UnitType.VANGUARD,
+        position=(0, 3),
+        hp=4,
+    )
+    turn = make_turn(
+        core=core,
+        units=(worker,),
+        enemies=(enemy,),
+        resources=0,
+        obstacle_cells={(1, 1), (-1, 1)},
+        beacon=SimpleNamespace(
+            position=(100, 100),
+            status="CARRIED",
+            carrier_id=core.id,
+        ),
+    )
+    memory = TacticMemory()
+    explore_square(memory)
+    memory.exploration_observed_tick = turn.tick
+    memory.current_visible_cells = frozenset({worker.position, core.position})
+
+    choose_actions(turn, memory)
+
+    assert worker.actions == []
+    assert memory.planned_reason_codes[worker.id] == "SCOUT_WAIT_NO_SAFE_FRONTIER"

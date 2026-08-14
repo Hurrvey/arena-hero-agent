@@ -50,22 +50,33 @@ def _reason_for(action_type: str) -> str:
     }.get(action_type, "DETERMINISTIC_FALLBACK")
 
 
-def _build_explanation(turn: object, plan: object) -> DecisionExplanation:
+def _build_explanation(
+    turn: object,
+    plan: object,
+    memory: object | None = None,
+) -> DecisionExplanation:
     positions = {_raw_id(unit.id): tuple(unit.position) for unit in getattr(turn, "units", ())}
+    reason_codes = getattr(memory, "planned_reason_codes", {})
+    reason_targets = getattr(memory, "planned_reason_targets", {})
     actions: list[DecisionAction] = []
+    acted_ids: set[bytes] = set()
     for identifier, action in sorted(
         getattr(plan, "unit_actions", {}).items(), key=lambda item: _raw_id(item[0])
     ):
         entity_id = _raw_id(identifier)
+        acted_ids.add(entity_id)
         action_type = _action_type(action)
         actions.append(
             DecisionAction(
                 entity_id=entity_id,
                 action_type=action_type,
-                reason_code=_reason_for(action_type),
+                reason_code=reason_codes.get(identifier, _reason_for(action_type)),
                 risk_before=0,
                 risk_after=0,
-                target=_target(action, positions.get(entity_id)),
+                target=reason_targets.get(
+                    identifier,
+                    _target(action, positions.get(entity_id)),
+                ),
             )
         )
     core_action = getattr(plan, "core_action", None)
@@ -76,10 +87,28 @@ def _build_explanation(turn: object, plan: object) -> DecisionExplanation:
             DecisionAction(
                 entity_id=_raw_id(core.id),
                 action_type=action_type,
-                reason_code=_reason_for(action_type),
+                reason_code=reason_codes.get(core.id, _reason_for(action_type)),
                 risk_before=0,
                 risk_after=0,
-                target=_target(core_action, tuple(core.position)),
+                target=reason_targets.get(
+                    core.id,
+                    _target(core_action, tuple(core.position)),
+                ),
+            )
+        )
+        acted_ids.add(_raw_id(core.id))
+    for identifier, reason in sorted(reason_codes.items(), key=lambda item: _raw_id(item[0])):
+        entity_id = _raw_id(identifier)
+        if entity_id in acted_ids or reason != "SCOUT_WAIT_NO_SAFE_FRONTIER":
+            continue
+        actions.append(
+            DecisionAction(
+                entity_id=entity_id,
+                action_type="WAIT",
+                reason_code=reason,
+                risk_before=0,
+                risk_after=0,
+                target=reason_targets.get(identifier),
             )
         )
     return DecisionExplanation(tuple(actions))
@@ -148,7 +177,7 @@ def plan_turn(turn: object, memory: object, profile: object) -> PlannerResult:
     return PlannerResult(
         tick=int(getattr(turn, "tick", 0)),
         plan=plan,
-        explanation=_build_explanation(turn, plan),
+        explanation=_build_explanation(turn, plan, memory),
         diagnostics=diagnostics,
     )
 

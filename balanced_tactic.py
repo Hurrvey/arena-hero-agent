@@ -34,7 +34,6 @@ from economic_strategy import (
     detect_two_cell_oscillation,
     invalidate_resource_targets,
     refresh_economy_memory,
-    scout_targets,
     update_runner_lease,
 )
 from defense_strategy import (
@@ -46,6 +45,14 @@ from defense_strategy import (
 )
 from strategy_policy import StrategyProfile
 from app.strategy.exploration import ExplorationMap
+from app.strategy.frontier import (
+    FrontierMemory,
+    FrontierSettings,
+    ScoutSnapshot,
+    assign_frontiers,
+    next_frontier_step,
+    record_scout_observation,
+)
 from app.strategy.models import EntityKind, EntitySnapshot, entity_snapshot_from_view
 from app.strategy.projection import compute_capacity_projection, should_defer_deposit
 from app.strategy.risk import build_visible_risk_map
@@ -238,7 +245,11 @@ class TacticMemory:
     exploration: ExplorationMap = field(default_factory=ExplorationMap)
     current_visible_cells: frozenset[tuple[int, int]] = field(default_factory=frozenset)
     exploration_observed_tick: int | None = None
+    newly_explored_cells: int = 0
     exploration_diagnostics: dict[str, object] = field(default_factory=dict)
+    frontier: FrontierMemory = field(default_factory=FrontierMemory)
+    planned_reason_codes: dict[object, str] = field(default_factory=dict)
+    planned_reason_targets: dict[object, tuple[int, int]] = field(default_factory=dict)
     processed_event_ids: set[bytes] = field(default_factory=set)
     processed_event_order: list[bytes] = field(default_factory=list)
     policy: StrategyProfile = field(default_factory=StrategyProfile.default)
@@ -249,6 +260,8 @@ class TacticMemory:
     worker_evacuations: int = 0
 
     def observe(self, turn) -> None:
+        self.planned_reason_codes.clear()
+        self.planned_reason_targets.clear()
         # A plan is scoped to one complete Turn.  Never carry a speculative
         # pickup intent into a later state where the Beacon may have moved,
         # been stolen, or dropped outside our current vision.
@@ -321,6 +334,17 @@ class TacticMemory:
         if len(self.processed_event_order) > 4096:
             self.processed_event_order = self.processed_event_order[-2048:]
             self.processed_event_ids = set(self.processed_event_order)
+
+
+def _record_reason(
+    memory: TacticMemory,
+    identifier: object,
+    reason: str,
+    target: tuple[int, int] | None = None,
+) -> None:
+    memory.planned_reason_codes[identifier] = reason
+    if target is not None:
+        memory.planned_reason_targets[identifier] = target
 
 
 def _beacon_is_ground(turn) -> bool:
@@ -652,6 +676,9 @@ def _observe_exploration_without_runtime(turn, memory: TacticMemory) -> None:
         snapshots,
         set(current_obstacles) | set(memory.exploration.known_obstacle_cells()),
     )
+    memory.newly_explored_cells = sum(
+        not memory.exploration.is_explored(position) for position in visible_cells
+    )
     memory.exploration.observe(
         visible_cells=visible_cells,
         visible_obstacles=current_obstacles,
@@ -811,6 +838,39 @@ def _record_move(
     if movement is None:
         return False
     direction, destination = movement
+    return _commit_move(
+        unit,
+        direction,
+        destination,
+        turn,
+        acted,
+        occupied,
+        reserved_destinations,
+        planned_from_core,
+        planned_into_core,
+        obstacles=obstacles,
+        planned_moves=planned_moves,
+        memory=memory,
+    )
+
+
+def _commit_move(
+    unit,
+    direction: Direction,
+    destination: tuple[int, int],
+    turn,
+    acted: set[object],
+    occupied: tuple[tuple[object, tuple[int, int]], ...],
+    reserved_destinations: set[tuple[int, int]],
+    planned_from_core: set[object],
+    planned_into_core: set[object],
+    *,
+    obstacles: Iterable[tuple[int, int]],
+    planned_moves: dict[bytes, tuple[int, int]] | None = None,
+    memory: TacticMemory | None = None,
+) -> bool:
+    """Commit one already validated cardinal movement and shared projections."""
+
     unit.move(direction)
     acted.add(unit.id)
     reserved_destinations.add(destination)
@@ -847,6 +907,51 @@ def _record_move(
         if destination == core.position:
             planned_into_core.add(unit.id)
     return True
+
+
+def _queue_frontier_step(
+    unit,
+    destination: tuple[int, int],
+    turn,
+    acted: set[object],
+    occupied: tuple[tuple[object, tuple[int, int]], ...],
+    reserved_destinations: set[tuple[int, int]],
+    planned_from_core: set[object],
+    planned_into_core: set[object],
+    *,
+    obstacles: Iterable[tuple[int, int]],
+    planned_moves: dict[bytes, tuple[int, int]],
+    memory: TacticMemory,
+) -> bool:
+    direction = _direction_to_adjacent(unit.position, destination)
+    if direction is None:
+        return False
+    legal = {
+        candidate: candidate_direction
+        for _, candidate_direction, candidate, _ in _candidate_steps(
+            unit,
+            turn,
+            occupied,
+            reserved_destinations,
+            obstacles,
+        )
+    }
+    if legal.get(destination) != direction:
+        return False
+    return _commit_move(
+        unit,
+        direction,
+        destination,
+        turn,
+        acted,
+        occupied,
+        reserved_destinations,
+        planned_from_core,
+        planned_into_core,
+        obstacles=obstacles,
+        planned_moves=planned_moves,
+        memory=memory,
+    )
 
 
 def _escape_core_cell(
@@ -2192,24 +2297,12 @@ def _queue_worker_actions(
             runner_id is not None and _same_id(worker.id, runner_id)
         )
     ]
-    existing_scouts = [
-        worker
-        for worker in economic_workers
-        if _uuid_key(worker.id) not in memory.economy.resource_intents
-    ]
-    previous_scout_targets = scout_targets(
-        memory.economy,
-        existing_scouts,
-        core_position=core_position,
-        tick=int(getattr(turn, "tick", 0)),
-        settings=settings,
-    )
     advance_stalled_targets(
         memory.economy,
         economic_workers,
         tick=int(getattr(turn, "tick", 0)),
         blocked=blocked_routes,
-        scout_assignments=previous_scout_targets,
+        scout_assignments={},
         settings=settings,
     )
     resource_assignments = assign_resource_targets(
@@ -2223,12 +2316,66 @@ def _queue_worker_actions(
         for worker in economic_workers
         if _uuid_key(worker.id) not in resource_assignments
     ]
-    worker_scout_targets = scout_targets(
-        memory.economy,
-        scouting_workers,
-        core_position=core_position,
-        tick=int(getattr(turn, "tick", 0)),
-        settings=settings,
+    tick = int(getattr(turn, "tick", 0))
+    frontier_settings = FrontierSettings(
+        search_radius=max(16, int(memory.policy.scout_ring_step) * 4)
+    )
+    scout_snapshots = tuple(
+        ScoutSnapshot(_uuid_key(worker.id), tuple(worker.position))
+        for worker in scouting_workers
+    )
+    friendly_snapshots = _controlled_snapshots(turn)
+    enemy_snapshots = tuple(
+        snapshot
+        for enemy in getattr(turn, "visible_enemies", ())
+        if (snapshot := _unit_snapshot(enemy, controlled=False)) is not None
+    )
+    risk_map = build_visible_risk_map(
+        friendly_snapshots,
+        enemy_snapshots,
+        obstacles,
+    )
+    if scout_snapshots:
+        min_x = min(scout.position[0] for scout in scout_snapshots) - frontier_settings.search_radius
+        min_y = min(scout.position[1] for scout in scout_snapshots) - frontier_settings.search_radius
+        max_x = max(scout.position[0] for scout in scout_snapshots) + frontier_settings.search_radius
+        max_y = max(scout.position[1] for scout in scout_snapshots) + frontier_settings.search_radius
+        explored_count = len(
+            memory.exploration.window(
+                min_x=min_x,
+                min_y=min_y,
+                max_x=max_x,
+                max_y=max_y,
+            ).explored_cells
+        )
+    else:
+        explored_count = 0
+    for scout in scout_snapshots:
+        record_scout_observation(
+            memory.frontier,
+            scout.entity_id,
+            scout.position,
+            explored_count=explored_count,
+            tick=tick,
+            settings=frontier_settings,
+        )
+    occupied_cells = frozenset(
+        [position for _, position in occupied]
+        + [
+            tuple(enemy.position)
+            for enemy in getattr(turn, "visible_enemies", ())
+            if getattr(enemy, "position", None) is not None
+        ]
+    )
+    frontier_assignments = assign_frontiers(
+        memory.frontier,
+        scout_snapshots,
+        exploration=memory.exploration,
+        risk_map=risk_map,
+        obstacles=frozenset(obstacles),
+        occupied=occupied_cells,
+        tick=tick,
+        settings=frontier_settings,
     )
 
     # The Worker loop is UUID-ordered.  A cargo Worker at the Core may be
@@ -2558,6 +2705,7 @@ def _queue_worker_actions(
                 continue
 
         goal: tuple[int, int] | None = None
+        frontier_assignment = None
         retreat = False
         if threatened:
             goal = core_position
@@ -2568,15 +2716,14 @@ def _queue_worker_actions(
             worker_key = _uuid_key(worker.id)
             goal = resource_assignments.get(worker_key)
             if goal is None:
-                goal = worker_scout_targets.get(worker_key, core_position)
+                frontier_assignment = frontier_assignments.get(worker_key)
 
         # A Core cell may hold only one Core plus one Unit.  If an economy
         # Worker is parked on the Core while another object is already there,
         # take one safe exploration step so the next combat spawn is not
         # permanently blocked by CELL_UNIT_LIMIT.
         if (
-            goal == core_position
-            and worker.position == core_position
+            worker.position == core_position
             # A full Core cannot accept this cargo.  If a spawn is affordable,
             # moving the Worker out is the only way to free the Unit slot;
             # the cargo remains on the Worker and can be deposited later.
@@ -2622,6 +2769,57 @@ def _queue_worker_actions(
                 planned_moves=planned_moves,
                 memory=memory,
             )
+            continue
+
+        if frontier_assignment is None:
+            _record_reason(memory, worker.id, "SCOUT_WAIT_NO_SAFE_FRONTIER")
+            continue
+        next_step = next_frontier_step(
+            ScoutSnapshot(_uuid_key(worker.id), tuple(worker.position)),
+            target=frontier_assignment.target,
+            memory=memory.frontier,
+            risk_map=risk_map,
+            obstacles=frozenset(obstacles),
+            occupied=occupied_cells,
+            reserved=frozenset(reserved_destinations),
+            tick=tick,
+            max_expansions=frontier_settings.route_expansions,
+        )
+        if next_step is not None and _queue_frontier_step(
+            worker,
+            next_step,
+            turn,
+            acted,
+            occupied,
+            reserved_destinations,
+            planned_from_core,
+            planned_into_core,
+            obstacles=obstacles,
+            planned_moves=planned_moves,
+            memory=memory,
+        ):
+            _record_reason(
+                memory,
+                worker.id,
+                frontier_assignment.reason_code,
+                frontier_assignment.target,
+            )
+            continue
+        _record_reason(
+            memory,
+            worker.id,
+            "SCOUT_WAIT_NO_SAFE_FRONTIER",
+            frontier_assignment.target,
+        )
+    memory.exploration_diagnostics = {
+        "newly_explored_cells": int(memory.newly_explored_cells),
+        "visible_cells": len(memory.current_visible_cells),
+        "frontier_assignments": len(frontier_assignments),
+        "frontier_progress_ticks": memory.frontier.frontier_progress_ticks,
+        "oscillation_detections": memory.frontier.oscillation_detections,
+        "oscillation_prevented_moves": memory.frontier.oscillation_prevented_moves,
+        "scout_wait_ticks": memory.frontier.scout_wait_ticks,
+    }
     return pending_deposit
 
 
@@ -3115,6 +3313,15 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
             "route_stalls": 0,
             "oscillation_ticks": 0,
             "runner_progress_ticks": 0,
+        }
+        memory.exploration_diagnostics = {
+            "newly_explored_cells": int(memory.newly_explored_cells),
+            "visible_cells": len(memory.current_visible_cells),
+            "frontier_assignments": 0,
+            "frontier_progress_ticks": memory.frontier.frontier_progress_ticks,
+            "oscillation_detections": memory.frontier.oscillation_detections,
+            "oscillation_prevented_moves": memory.frontier.oscillation_prevented_moves,
+            "scout_wait_ticks": memory.frontier.scout_wait_ticks,
         }
         return None
 

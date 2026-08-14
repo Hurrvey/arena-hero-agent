@@ -77,6 +77,9 @@ class ExplorationRuntime:
             set(current_obstacles) | set(exploration.known_obstacle_cells())
         )
         current_cells = compute_visible_cells(entities, visibility_obstacles)
+        memory.newly_explored_cells = sum(
+            not exploration.is_explored(position) for position in current_cells
+        )
         delta = exploration.observe(
             visible_cells=current_cells,
             visible_obstacles=current_obstacles,

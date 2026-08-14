@@ -339,6 +339,13 @@ def scout_targets(
     tick: int,
     settings: EconomySettings,
 ) -> dict[bytes, Position]:
+    """Return legacy radial targets for compatibility-only callers.
+
+    The live tactic uses persistent explored/unknown frontiers instead.  This
+    helper remains callable so older integrations do not break while they
+    migrate away from fixed rings.
+    """
+
     targets: dict[bytes, Position] = {}
     claimed: set[Position] = set()
     for worker in sorted(workers, key=lambda item: _uuid_key(item.id)):
