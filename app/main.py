@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from strategy_policy import StrategyProfile
 
 from .adaptive.legacy_import import LegacyImporter
-from .api import adaptive, agent, metrics, state, strategy, websocket
+from .api import adaptive, agent, exploration, metrics, state, strategy, websocket
 from .api import settings as settings_api
 from .api.dependencies import Services
 from .api.websocket import CommittedEventBroadcaster
@@ -164,6 +164,7 @@ def create_app(
 
     app.include_router(agent.router)
     app.include_router(state.router)
+    app.include_router(exploration.router)
     app.include_router(strategy.router)
     app.include_router(adaptive.router)
     app.include_router(metrics.router)

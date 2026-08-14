@@ -20,3 +20,13 @@ def test_security_headers_and_same_origin_csp_are_present() -> None:
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
     assert "default-src 'self'" in response.headers["content-security-policy"]
+
+
+def test_exploration_contract_has_bounds_but_no_account_selector() -> None:
+    with TestClient(create_app()) as client:
+        schema = client.get("/openapi.json").json()
+
+    operation = schema["paths"]["/api/v1/exploration"]["get"]
+    names = {parameter["name"] for parameter in operation["parameters"]}
+    assert names == {"minX", "minY", "maxX", "maxY"}
+    assert "account" not in str(operation).lower()
