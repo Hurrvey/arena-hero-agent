@@ -1,4 +1,5 @@
 import json
+import math
 
 from app.adaptive.projection import project_record
 
@@ -32,3 +33,61 @@ def test_projection_is_bounded() -> None:
     projected = project_record(record)
 
     assert len(projected["events"]) <= 64
+
+
+def test_projection_whitelists_bounded_exploration_and_contact_aggregates() -> None:
+    record = {
+        "exploration": {
+            "newly_explored_cells": 4,
+            "visible_cells": 57,
+            "frontier_assignments": 2,
+            "frontier_progress_ticks": 3,
+            "oscillation_detections": 1,
+            "oscillation_prevented_moves": 1,
+            "scout_wait_ticks": 0,
+            "frontier_coordinates": [[9, 9]],
+            "account_scope": "never-send",
+            "ignored_boolean": True,
+            "ignored_negative": -1,
+            "ignored_infinite": math.inf,
+        },
+        "contact": {
+            "level": "THREATENING",
+            "visible_enemy_count": 2,
+            "threatened_workers": 1,
+            "evading_workers": 1,
+            "responding_combat_units": 1,
+            "contact_attack_actions": 2,
+            "contact_investigation_ticks": 3,
+            "enemy_ids": ["never-send"],
+            "last_seen_position": [9, 9],
+            "ignored_boolean": True,
+            "ignored_negative": -1,
+            "ignored_infinite": math.inf,
+            "ignored_label": "X" * 65,
+        },
+    }
+
+    projected = project_record(record)
+    encoded = json.dumps(projected, sort_keys=True)
+
+    assert projected["exploration"] == {
+        "frontier_assignments": 2.0,
+        "frontier_progress_ticks": 3.0,
+        "newly_explored_cells": 4.0,
+        "oscillation_detections": 1.0,
+        "oscillation_prevented_moves": 1.0,
+        "scout_wait_ticks": 0.0,
+        "visible_cells": 57.0,
+    }
+    assert projected["contact"] == {
+        "contact_attack_actions": 2.0,
+        "contact_investigation_ticks": 3.0,
+        "evading_workers": 1.0,
+        "level": "THREATENING",
+        "responding_combat_units": 1.0,
+        "threatened_workers": 1.0,
+        "visible_enemy_count": 2.0,
+    }
+    for secret in ("never-send", "position", "coordinates", "account_scope", "ignored"):
+        assert secret not in encoded

@@ -32,6 +32,24 @@ _METRIC_NAMES = {
     "defender_coverage",
     "worker_evacuations",
 }
+_EXPLORATION_COUNT_FIELDS = {
+    "newly_explored_cells",
+    "visible_cells",
+    "frontier_assignments",
+    "frontier_progress_ticks",
+    "oscillation_detections",
+    "oscillation_prevented_moves",
+    "scout_wait_ticks",
+}
+_CONTACT_COUNT_FIELDS = {
+    "visible_enemy_count",
+    "threatened_workers",
+    "evading_workers",
+    "responding_combat_units",
+    "contact_attack_actions",
+    "contact_investigation_ticks",
+}
+_CONTACT_LEVELS = {"NONE", "SPOTTED", "THREATENING", "ENGAGED"}
 
 
 def _label(value: object) -> str | None:
@@ -128,6 +146,20 @@ def project_record(record: Mapping[str, object]) -> dict[str, object]:
             safe_defense["defense_level"] = level
         if safe_defense:
             result["defense"] = safe_defense
+    exploration = _nonnegative_numbers(
+        record.get("exploration"),
+        _EXPLORATION_COUNT_FIELDS,
+    )
+    if exploration:
+        result["exploration"] = exploration
+    contact = record.get("contact")
+    if isinstance(contact, Mapping):
+        safe_contact = _nonnegative_numbers(contact, _CONTACT_COUNT_FIELDS)
+        level = _label(contact.get("level"))
+        if level in _CONTACT_LEVELS:
+            safe_contact["level"] = level
+        if safe_contact:
+            result["contact"] = safe_contact
     return result
 
 

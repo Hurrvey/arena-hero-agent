@@ -28,6 +28,17 @@ from .serialization import (
     serialize_turn,
 )
 
+_PUBLIC_CONTACT_LEVELS = frozenset({"NONE", "SPOTTED", "THREATENING", "ENGAGED"})
+
+
+def _public_contact_level(value: object) -> str:
+    level = str(value).strip().upper()
+    return level if level in _PUBLIC_CONTACT_LEVELS else "NONE"
+
+
+def _public_count(value: object) -> int:
+    return value if type(value) is int and value >= 0 else 0
+
 
 class RuntimeServicesFactory:
     def __init__(
@@ -187,13 +198,13 @@ class RuntimeServicesFactory:
                 batch.result.diagnostics.defense.get("level", "CLEAR")
             ).upper()
             public_state["contact"] = {
-                "level": str(
+                "level": _public_contact_level(
                     batch.result.diagnostics.contact.get("level", "NONE")
-                ).upper(),
-                "visibleEnemyCount": int(
+                ),
+                "visibleEnemyCount": _public_count(
                     batch.result.diagnostics.contact.get("visible_enemy_count", 0)
                 ),
-                "respondingUnitCount": int(
+                "respondingUnitCount": _public_count(
                     batch.result.diagnostics.contact.get(
                         "responding_combat_units",
                         0,
@@ -236,6 +247,8 @@ class RuntimeServicesFactory:
                 **dict(result.diagnostics.economy),
                 "defense_level": result.diagnostics.defense.get("level", "CLEAR"),
                 "incoming_core_damage": result.diagnostics.defense.get("incoming_damage", 0),
+                "exploration": dict(result.diagnostics.exploration),
+                "contact": dict(result.diagnostics.contact),
             }
             observer(turn, receipt, self.strategies.current().profile, diagnostics)
         else:

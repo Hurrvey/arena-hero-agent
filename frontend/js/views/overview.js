@@ -4,20 +4,41 @@ import { renderEvents } from "../components/event-list.js";
 import { renderUnitTable } from "../components/unit-table.js";
 import { escapeHtml, formatNumber } from "../formatters.js";
 
-export function renderOverview(root, snapshot) {
-  const state = snapshot.state || {};
+export function overviewMetrics(state = {}) {
   const core = state.core || {};
   const population = state.population ?? state.units?.length ?? 0;
   const capacity = state.resourceCapacity ?? state.resource_capacity ?? "—";
   const beaconStatus = state.beacon?.status || "未知";
-  root.innerHTML = `
-    <section class="metrics-grid" aria-label="实时指标">
-      ${metricCard({label:"资源", value:formatNumber(state.resources), unit:`/ ${capacity}`, icon:"metric-resource"})}
+  const coreThreat = state.defenseLevel || state.threat || "CLEAR";
+  const contact = state.contact || {};
+  const contactLevel = contact.level || "NONE";
+  const visibleEnemyCount = Number.isInteger(contact.visibleEnemyCount) && contact.visibleEnemyCount >= 0
+    ? contact.visibleEnemyCount
+    : 0;
+  const respondingUnitCount = Number.isInteger(contact.respondingUnitCount) && contact.respondingUnitCount >= 0
+    ? contact.respondingUnitCount
+    : 0;
+  const danger = coreThreat !== "CLEAR" || ["THREATENING", "ENGAGED"].includes(contactLevel);
+
+  return `<section class="metrics-grid" aria-label="实时指标">
+      ${metricCard({label:"资源", value:formatNumber(state.resources), unit:`/ ${escapeHtml(capacity)}`, icon:"metric-resource"})}
       ${metricCard({label:"人口", value:formatNumber(population), icon:"metric-population"})}
       ${metricCard({label:"Core", value:formatNumber(core.hp), unit:`HP · ${formatNumber(core.shield)} Shield`, icon:"metric-shield"})}
       ${metricCard({label:"Beacon", value:escapeHtml(beaconStatus), icon:"map-beacon", color:"var(--beacon)"})}
-      ${metricCard({label:"威胁", value:escapeHtml(state.defenseLevel || state.threat || "CLEAR"), icon:"status-danger", color:state.defenseLevel === "CLEAR" ? "var(--success)" : "var(--danger)"})}
-    </section>
+      ${metricCard({
+        label:"威胁",
+        value:`Core ${escapeHtml(coreThreat)}`,
+        unit:`接敌 ${escapeHtml(contactLevel)} · ${visibleEnemyCount} 敌军 · ${respondingUnitCount} 响应`,
+        icon:"status-danger",
+        color:danger ? "var(--danger)" : "var(--success)",
+      })}
+    </section>`;
+}
+
+export function renderOverview(root, snapshot) {
+  const state = snapshot.state || {};
+  root.innerHTML = `
+    ${overviewMetrics(state)}
     <section class="operations-grid">
       <article class="panel map-panel">
         <header class="panel-header"><h2 class="panel-title">实时战术地图</h2><span class="mono muted">Tick ${escapeHtml(state.tick ?? snapshot.runtime.lastTick ?? "—")}</span></header>

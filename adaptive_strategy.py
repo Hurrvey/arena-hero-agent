@@ -273,6 +273,28 @@ _DEFENSE_COUNT_FIELDS = (
     "worker_evacuations",
 )
 _DEFENSE_LEVELS = {"CLEAR", "WATCH", "APPROACH", "ATTACK", "LETHAL"}
+_EXPLORATION_COUNT_FIELDS = frozenset(
+    {
+        "newly_explored_cells",
+        "visible_cells",
+        "frontier_assignments",
+        "frontier_progress_ticks",
+        "oscillation_detections",
+        "oscillation_prevented_moves",
+        "scout_wait_ticks",
+    }
+)
+_CONTACT_COUNT_FIELDS = frozenset(
+    {
+        "visible_enemy_count",
+        "threatened_workers",
+        "evading_workers",
+        "responding_combat_units",
+        "contact_attack_actions",
+        "contact_investigation_ticks",
+    }
+)
+_CONTACT_LEVELS = frozenset({"NONE", "SPOTTED", "THREATENING", "ENGAGED"})
 _SAFE_EVENT_VALUE_FIELDS = (
     "amount",
     "damage",
@@ -334,6 +356,34 @@ def _defense_mapping(diagnostics: Any) -> dict[str, Any]:
     if level in _DEFENSE_LEVELS:
         result["defense_level"] = level
     for name in _DEFENSE_COUNT_FIELDS:
+        value = _nonnegative_int(diagnostics.get(name))
+        if value is not None:
+            result[name] = value
+    return result
+
+
+def _exploration_mapping(diagnostics: Any) -> dict[str, Any]:
+    """Whitelist aggregate exploration counters without spatial history."""
+
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    return {
+        name: value
+        for name in sorted(_EXPLORATION_COUNT_FIELDS)
+        if (value := _nonnegative_int(diagnostics.get(name))) is not None
+    }
+
+
+def _contact_mapping(diagnostics: Any) -> dict[str, Any]:
+    """Whitelist the contact level and aggregate response counters only."""
+
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    level = _safe_label(diagnostics.get("level"))
+    if level in _CONTACT_LEVELS:
+        result["level"] = level
+    for name in sorted(_CONTACT_COUNT_FIELDS):
         value = _nonnegative_int(diagnostics.get(name))
         if value is not None:
             result[name] = value
@@ -476,6 +526,12 @@ def _prompt_record(record: Mapping[str, Any]) -> dict[str, Any]:
     defense = _defense_mapping(record.get("defense"))
     if defense:
         result["defense"] = defense
+    exploration = _exploration_mapping(record.get("exploration"))
+    if exploration:
+        result["exploration"] = exploration
+    contact = _contact_mapping(record.get("contact"))
+    if contact:
+        result["contact"] = contact
     return result
 
 
@@ -574,6 +630,13 @@ class TurnTelemetry:
         defense = _defense_mapping(diagnostics)
         if defense:
             result["defense"] = defense
+        nested_diagnostics = diagnostics if isinstance(diagnostics, Mapping) else {}
+        exploration = _exploration_mapping(nested_diagnostics.get("exploration"))
+        if exploration:
+            result["exploration"] = exploration
+        contact = _contact_mapping(nested_diagnostics.get("contact"))
+        if contact:
+            result["contact"] = contact
         return result
 
 

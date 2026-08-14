@@ -4,6 +4,19 @@ import test from "node:test";
 import { renderEvents } from "../js/components/event-list.js";
 import { renderPlan } from "../js/components/plan-status.js";
 import { decorateStateWithPlan } from "../js/map/plan-routes.js";
+import { overviewMetrics } from "../js/views/overview.js";
+
+test("overview distinguishes Core defense from frontier contact", () => {
+  const html = overviewMetrics({
+    tick: 42,
+    defenseLevel: "CLEAR",
+    contact: { level: "THREATENING", visibleEnemyCount: 1, respondingUnitCount: 1 },
+  });
+
+  assert.match(html, /Core CLEAR/);
+  assert.match(html, /接敌 THREATENING/);
+  assert.match(html, /1 敌军 · 1 响应/);
+});
 
 test("effective plan displays concrete movement details and deterministic reason", () => {
   const html = renderPlan({

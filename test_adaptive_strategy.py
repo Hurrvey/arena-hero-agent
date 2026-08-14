@@ -192,6 +192,54 @@ def test_telemetry_contains_bounded_defense_diagnostics():
     assert "99" not in encoded
 
 
+def test_turn_telemetry_whitelists_exploration_and_contact_aggregates() -> None:
+    from adaptive_strategy import TurnTelemetry, _prompt_record
+
+    diagnostics = {
+        "exploration": {
+            "newly_explored_cells": 4,
+            "visible_cells": 57,
+            "frontier_assignments": 2,
+            "frontier_progress_ticks": 2,
+            "oscillation_detections": 1,
+            "oscillation_prevented_moves": 1,
+            "scout_wait_ticks": 0,
+            "frontier_coordinates": [[9, 9]],
+            "account_scope": "never-send",
+        },
+        "contact": {
+            "level": "THREATENING",
+            "visible_enemy_count": 2,
+            "threatened_workers": 1,
+            "evading_workers": 1,
+            "responding_combat_units": 1,
+            "contact_attack_actions": 0,
+            "contact_investigation_ticks": 0,
+            "enemy_ids": ["never-send"],
+            "last_seen_position": [9, 9],
+        },
+    }
+    turn = SimpleNamespace(
+        tick=77,
+        state=SimpleNamespace(status="ACTIVE", population=1, resources=0),
+        events=(),
+    )
+    record = TurnTelemetry.from_turn(
+        turn,
+        SimpleNamespace(accepted=True),
+        StrategyProfile.default(),
+        diagnostics=diagnostics,
+    )
+    prompt = _prompt_record(record)
+    encoded = json.dumps(prompt, sort_keys=True)
+
+    assert prompt["exploration"]["newly_explored_cells"] == 4
+    assert prompt["contact"]["level"] == "THREATENING"
+    assert "never-send" not in encoded
+    assert "position" not in encoded
+    assert "coordinates" not in encoded
+
+
 def test_scorecard_penalizes_core_damage_and_lethal_exposure():
     from adaptive_strategy import Scorecard
 
