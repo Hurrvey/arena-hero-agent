@@ -15,6 +15,7 @@ from app.strategy.planner_adapter import plan_turn
 
 from .agent_runtime import AgentRuntime
 from .account_lock import account_scope_from_api_key
+from .exploration import ExplorationRuntime
 from .client import sdk_client_factory
 from .models import RuntimeBatch
 from .runtime_manager import RuntimeManager
@@ -38,6 +39,7 @@ class RuntimeServicesFactory:
         metrics: MetricsRepository,
         adaptive: AdaptiveRepository,
         broadcaster,
+        exploration=None,
     ) -> None:
         self.settings = settings
         self.runtime_store = runtime_store
@@ -45,11 +47,13 @@ class RuntimeServicesFactory:
         self.metrics = metrics
         self.adaptive = adaptive
         self.broadcaster = broadcaster
+        self.exploration = exploration
         self._lock = RLock()
         self._session_id: str | None = None
         self._account_scope: str | None = None
         self._mapper: PublicIdMapper | None = None
         self._coordinator = None
+        self._exploration_runtime: ExplorationRuntime | None = None
 
     @property
     def session_id(self) -> str | None:
@@ -85,6 +89,12 @@ class RuntimeServicesFactory:
         except (OSError, ValueError, SkillBundleError):
             coordinator = DisabledAdaptiveCoordinator()
         self._coordinator = coordinator
+        exploration_runtime = (
+            ExplorationRuntime(self.exploration, account_scope)
+            if self.exploration is not None
+            else None
+        )
+        self._exploration_runtime = exploration_runtime
         return AgentRuntime(
             api_key=api_key,
             client_factory=sdk_client_factory,
@@ -93,6 +103,7 @@ class RuntimeServicesFactory:
             persistence=self.persist,
             adaptive_observer=self.observe_adaptive,
             lock_directory=self.settings.lock_directory,
+            exploration=exploration_runtime,
         )
 
     def profile_for_tick(self, tick: int | None = None):
@@ -133,6 +144,15 @@ class RuntimeServicesFactory:
         if batch.turn is None:
             return
         raw_state, public_state = serialize_turn(batch.turn, mapper)
+        if batch.exploration is not None and self._exploration_runtime is not None:
+            exploration_revision = self._exploration_runtime.persist(batch.exploration)
+            public_state["visibility"] = {
+                "tick": int(batch.exploration.tick),
+                "currentCells": [
+                    list(cell) for cell in sorted(batch.exploration.current_cells)
+                ],
+                "explorationRevision": int(exploration_revision),
+            }
         resolution_events = serialize_resolution_events(batch.turn, mapper)
         previous_tick = max(0, int(batch.tick or 0) - 1)
         state_service = ("state.snapshot", {"paused": batch.result is None})
@@ -214,7 +234,16 @@ class RuntimeServicesFactory:
             coordinator.close()
 
 
-def build_runtime_manager(*, settings, runtime_store, strategies, metrics, adaptive, broadcaster):
+def build_runtime_manager(
+    *,
+    settings,
+    runtime_store,
+    strategies,
+    metrics,
+    adaptive,
+    broadcaster,
+    exploration=None,
+):
     factory = RuntimeServicesFactory(
         settings=settings,
         runtime_store=runtime_store,
@@ -222,6 +251,7 @@ def build_runtime_manager(*, settings, runtime_store, strategies, metrics, adapt
         metrics=metrics,
         adaptive=adaptive,
         broadcaster=broadcaster,
+        exploration=exploration,
     )
     return RuntimeManager(factory.build), factory
 

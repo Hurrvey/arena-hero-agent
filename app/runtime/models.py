@@ -37,3 +37,4 @@ class RuntimeBatch:
     result: object | None = None
     receipt: object | None = None
     source: str | None = None
+    exploration: object | None = None

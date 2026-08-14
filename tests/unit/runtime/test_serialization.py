@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
+from strategy_policy import StrategyProfile
+
 from app.observability.redaction import PublicIdMapper
+from app.runtime.models import RuntimeBatch
+from app.runtime.service_factory import RuntimeServicesFactory
 from app.runtime.serialization import (
     serialize_public_explanation,
     serialize_public_plan,
@@ -9,7 +13,14 @@ from app.runtime.serialization import (
     serialize_resolution_service_payload,
     serialize_turn,
 )
-from app.strategy.planner import DecisionAction, DecisionExplanation
+from app.storage import AdaptiveRepository, Database, MetricsRepository, RuntimeStore
+from app.storage import StrategyRepository
+from app.strategy.planner import (
+    DecisionAction,
+    DecisionExplanation,
+    PlannerDiagnostics,
+    PlannerResult,
+)
 
 
 def test_turn_projects_sdk_objects_into_dashboard_state() -> None:
@@ -310,3 +321,65 @@ def test_public_explanation_reuses_plan_short_id_and_hides_uuid_bytes() -> None:
     }
     assert private_unit.hex not in str(public)
     assert str(private_unit) not in str(public)
+
+
+def test_post_submit_persistence_publishes_current_visibility_and_revision(tmp_path) -> None:
+    database = Database(tmp_path / "agent.db")
+    database.initialize()
+    runtime_store = RuntimeStore(database)
+    strategies = StrategyRepository(database)
+    strategies.ensure_initial(StrategyProfile.default())
+    session = runtime_store.create_session(account_hash="hashed-account")
+    persisted = []
+    factory = RuntimeServicesFactory(
+        settings=SimpleNamespace(),
+        runtime_store=runtime_store,
+        strategies=strategies,
+        metrics=MetricsRepository(database),
+        adaptive=AdaptiveRepository(database),
+        broadcaster=SimpleNamespace(publish_committed=lambda event: None),
+    )
+    factory._session_id = session.session_id
+    factory._mapper = PublicIdMapper(session.session_id)
+    factory._exploration_runtime = SimpleNamespace(
+        persist=lambda observation: persisted.append(observation) or 4
+    )
+    observation = SimpleNamespace(
+        tick=7,
+        current_cells=frozenset({(2, 1), (1, 1)}),
+    )
+    turn = SimpleNamespace(
+        tick=7,
+        state={
+            "status": "ACTIVE",
+            "resources": 0,
+            "population": 0,
+            "objects": [],
+            "events": [],
+        },
+        events=(),
+    )
+    result = PlannerResult(
+        tick=7,
+        plan={"tick": 7},
+        explanation=DecisionExplanation(),
+        diagnostics=PlannerDiagnostics(),
+    )
+
+    factory.persist(
+        RuntimeBatch(
+            "TURN_SUBMITTED",
+            7,
+            turn=turn,
+            result=result,
+            source="AGENT",
+            exploration=observation,
+        )
+    )
+
+    assert persisted == [observation]
+    assert runtime_store.current_state(session.session_id)["visibility"] == {
+        "tick": 7,
+        "currentCells": [[1, 1], [2, 1]],
+        "explorationRevision": 4,
+    }

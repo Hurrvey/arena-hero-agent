@@ -31,6 +31,7 @@ class AgentRuntime:
         adaptive_observer,
         lock_directory,
         event_queue: RuntimeEventQueue | None = None,
+        exploration=None,
     ) -> None:
         self.runtime_id = uuid4().hex
         self._api_key = api_key
@@ -42,6 +43,7 @@ class AgentRuntime:
         self._lock = AccountLock.from_api_key(api_key, lock_directory, runtime_id=self.runtime_id)
         self._queue = event_queue or RuntimeEventQueue()
         self._memory = TacticMemory()
+        self._exploration = exploration
         self._status = RuntimeStatus.STOPPED
         self._status_lock = RLock()
         self._pause_requested = Event()
@@ -205,10 +207,22 @@ class AgentRuntime:
         self._last_tick = tick
         if tick in self._recent_ticks or tick <= self._highest_submitted_tick:
             return
+        observation = (
+            self._exploration.observe_turn(turn, self._memory)
+            if self._exploration is not None
+            else None
+        )
         if self._pause_requested.is_set() or self._status is RuntimeStatus.PAUSED:
             self._paused_tick = tick
             self._remember_tick(tick)
-            self._persistence(RuntimeBatch("SNAPSHOT_ONLY", tick, turn=turn))
+            self._persistence(
+                RuntimeBatch(
+                    "SNAPSHOT_ONLY",
+                    tick,
+                    turn=turn,
+                    exploration=observation,
+                )
+            )
             return
         if tick == self._paused_tick:
             return
@@ -222,7 +236,15 @@ class AgentRuntime:
         self._remember_tick(tick)
         self._submitted_count += 1
         self._highest_submitted_tick = max(self._highest_submitted_tick, tick)
-        batch = RuntimeBatch("TURN_SUBMITTED", tick, turn, result, receipt, "AGENT")
+        batch = RuntimeBatch(
+            "TURN_SUBMITTED",
+            tick,
+            turn,
+            result,
+            receipt,
+            "AGENT",
+            observation,
+        )
         self._queue.put_critical(batch)
         self._persistence(batch)
         try:

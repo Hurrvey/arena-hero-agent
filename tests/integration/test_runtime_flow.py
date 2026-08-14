@@ -23,22 +23,88 @@ class FakeTurn:
         return SimpleNamespace(tick=self.tick, source="AGENT", accepted=True)
 
 
-def make_runtime(tmp_path, events, *, persistence=None, queue=None):
+def make_runtime(
+    tmp_path,
+    events,
+    *,
+    persistence=None,
+    queue=None,
+    planner=None,
+    exploration=None,
+):
     client = FakeGameClient(events)
     order: list[str] = []
     agent = AgentRuntime(
         api_key="key",
         client_factory=lambda _key: client,
-        planner=lambda turn, memory, profile: (
-            order.append("plan") or SimpleNamespace(plan={"tick": turn.tick})
+        planner=planner
+        or (
+            lambda turn, memory, profile: (
+                order.append("plan") or SimpleNamespace(plan={"tick": turn.tick})
+            )
         ),
         profile_provider=lambda: SimpleNamespace(),
         persistence=persistence or (lambda batch: order.append("persist")),
         adaptive_observer=lambda *args: order.append("adaptive"),
         lock_directory=tmp_path,
         event_queue=queue,
+        exploration=exploration,
     )
     return agent, client, order
+
+
+def test_exploration_observes_before_plan_and_persists_after_submit(tmp_path) -> None:
+    calls: list[str] = []
+    observation = SimpleNamespace(
+        current_cells=frozenset({(0, 0)}),
+        delta=None,
+        base_revision=0,
+        loaded_history=True,
+    )
+    exploration = SimpleNamespace(
+        observe_turn=lambda turn, memory: calls.append("observe") or observation,
+        persist=lambda value: calls.append("persist-exploration") or 1,
+    )
+
+    def persistence(batch):
+        calls.append("persist")
+        assert batch.exploration is observation
+        exploration.persist(batch.exploration)
+
+    turn = FakeTurn(8, calls)
+    agent, _client, _order = make_runtime(
+        tmp_path,
+        (),
+        persistence=persistence,
+        planner=lambda turn, memory, profile: (
+            calls.append("plan") or SimpleNamespace(plan={"tick": turn.tick})
+        ),
+        exploration=exploration,
+    )
+
+    agent.handle_event(turn)
+
+    assert calls == ["observe", "plan", "submit", "persist", "persist-exploration"]
+
+
+def test_paused_runtime_observes_before_snapshot_persistence(tmp_path) -> None:
+    calls: list[str] = []
+    observation = SimpleNamespace(current_cells=frozenset({(0, 0)}))
+    exploration = SimpleNamespace(
+        observe_turn=lambda turn, memory: calls.append("observe") or observation,
+    )
+    agent, _client, _order = make_runtime(
+        tmp_path,
+        (),
+        persistence=lambda batch: calls.append(f"persist-{batch.kind}"),
+        exploration=exploration,
+    )
+    agent._set_status(RuntimeStatus.PAUSED)
+    turn = FakeTurn(9, calls)
+
+    agent.handle_event(turn)
+
+    assert calls == ["observe", "persist-SNAPSHOT_ONLY"]
 
 
 def test_duplicate_turn_submits_at_most_once(tmp_path) -> None:

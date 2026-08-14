@@ -26,6 +26,7 @@ from .runtime.service_factory import build_runtime_manager
 from .storage import (
     AdaptiveRepository,
     Database,
+    ExplorationRepository,
     MetricsRepository,
     RetentionService,
     RuntimeStore,
@@ -60,6 +61,7 @@ def create_app(
     strategies = injected.get("strategies") or StrategyRepository(database)
     metrics_repository = injected.get("metrics") or MetricsRepository(database)
     adaptive_repository = injected.get("adaptive") or AdaptiveRepository(database)
+    exploration_repository = injected.get("exploration") or ExplorationRepository(database)
     broadcaster = injected.get("broadcaster") or CommittedEventBroadcaster(
         configured.websocket_client_queue
     )
@@ -74,6 +76,7 @@ def create_app(
             metrics=metrics_repository,
             adaptive=adaptive_repository,
             broadcaster=broadcaster,
+            exploration=exploration_repository,
         )
     container = Services(
         configured,
@@ -82,6 +85,7 @@ def create_app(
         strategies,
         metrics_repository,
         adaptive_repository,
+        exploration_repository,
         runtime_manager,
         broadcaster,
         runtime_factory=runtime_factory,

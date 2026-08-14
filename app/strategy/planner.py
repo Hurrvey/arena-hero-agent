@@ -37,6 +37,8 @@ class DecisionExplanation:
 class PlannerDiagnostics:
     economy: Mapping[str, object] = field(default_factory=dict)
     defense: Mapping[str, object] = field(default_factory=dict)
+    exploration: Mapping[str, object] = field(default_factory=dict)
+    contact: Mapping[str, object] = field(default_factory=dict)
     rejected_moves: tuple[Mapping[str, object], ...] = ()
 
 
@@ -60,6 +62,8 @@ class PlannerResult:
             "diagnostics": {
                 "economy": _json_safe(self.diagnostics.economy),
                 "defense": _json_safe(self.diagnostics.defense),
+                "exploration": _json_safe(self.diagnostics.exploration),
+                "contact": _json_safe(self.diagnostics.contact),
                 "rejected_moves": _json_safe(self.diagnostics.rejected_moves),
             },
         }

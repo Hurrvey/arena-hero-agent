@@ -140,6 +140,10 @@ def plan_turn(turn: object, memory: object, profile: object) -> PlannerResult:
                 ),
             }
         ),
+        exploration=MappingProxyType(
+            dict(getattr(memory, "exploration_diagnostics", {}))
+        ),
+        contact=MappingProxyType(dict(getattr(memory, "contact_diagnostics", {}))),
     )
     return PlannerResult(
         tick=int(getattr(turn, "tick", 0)),

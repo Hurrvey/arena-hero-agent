@@ -45,7 +45,8 @@ from defense_strategy import (
     select_defenders,
 )
 from strategy_policy import StrategyProfile
-from app.strategy.models import EntityKind, EntitySnapshot
+from app.strategy.exploration import ExplorationMap
+from app.strategy.models import EntityKind, EntitySnapshot, entity_snapshot_from_view
 from app.strategy.projection import compute_capacity_projection, should_defer_deposit
 from app.strategy.risk import build_visible_risk_map
 from app.strategy.visibility import compute_visible_cells
@@ -234,6 +235,10 @@ class TacticMemory:
     planned_carrier_tick: int | None = None
     planned_carrier_move_tick: int | None = None
     known_obstacles: set[tuple[int, int]] = field(default_factory=set)
+    exploration: ExplorationMap = field(default_factory=ExplorationMap)
+    current_visible_cells: frozenset[tuple[int, int]] = field(default_factory=frozenset)
+    exploration_observed_tick: int | None = None
+    exploration_diagnostics: dict[str, object] = field(default_factory=dict)
     processed_event_ids: set[bytes] = field(default_factory=set)
     processed_event_order: list[bytes] = field(default_factory=list)
     policy: StrategyProfile = field(default_factory=StrategyProfile.default)
@@ -618,16 +623,43 @@ def _visible_attack_count(cell, enemies, obstacles) -> int:
 
 
 def _unit_snapshot(unit, *, controlled: bool) -> EntitySnapshot | None:
-    unit_type = _enum_name(getattr(unit, "unit_type", None))
-    if unit_type not in {"WORKER", "VANGUARD", "RANGER"}:
-        return None
-    return EntitySnapshot(
-        _uuid_key(unit.id),
-        EntityKind(unit_type),
-        tuple(unit.position),
-        max(0, int(unit.hp)),
-        controlled=controlled,
+    return entity_snapshot_from_view(unit, controlled=controlled)
+
+
+def _controlled_snapshots(turn) -> tuple[EntitySnapshot, ...]:
+    snapshots: list[EntitySnapshot] = []
+    core = getattr(turn, "core", None)
+    if core is not None:
+        snapshot = entity_snapshot_from_view(core, controlled=True)
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    for unit in getattr(turn, "units", ()) or ():
+        snapshot = entity_snapshot_from_view(unit, controlled=True)
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    return tuple(sorted(snapshots, key=lambda item: item.entity_id))
+
+
+def _observe_exploration_without_runtime(turn, memory: TacticMemory) -> None:
+    """Keep standalone CLI planning aligned with the Web runtime observer."""
+
+    tick = int(getattr(turn, "tick", 0))
+    snapshots = _controlled_snapshots(turn)
+    current_obstacles = frozenset(
+        tuple(position) for position in (getattr(turn, "obstacle_cells", ()) or ())
     )
+    visible_cells = compute_visible_cells(
+        snapshots,
+        set(current_obstacles) | set(memory.exploration.known_obstacle_cells()),
+    )
+    memory.exploration.observe(
+        visible_cells=visible_cells,
+        visible_obstacles=current_obstacles,
+        tick=tick,
+    )
+    memory.current_visible_cells = visible_cells
+    memory.exploration_observed_tick = tick
+    memory.known_obstacles.update(memory.exploration.known_obstacle_cells())
 
 
 def _deposit_would_overflow_after_combat(
@@ -3069,6 +3101,8 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
 
     memory = memory or TacticMemory()
     memory.observe(turn)
+    if memory.exploration_observed_tick != int(getattr(turn, "tick", 0)):
+        _observe_exploration_without_runtime(turn, memory)
     memory.worker_evacuations = 0
     if turn.core is None:
         _refresh_defense_state(turn, memory)
@@ -3086,30 +3120,7 @@ def choose_actions(turn, memory: TacticMemory | None = None) -> None:
 
     _refresh_defense_state(turn, memory)
 
-    friendly_snapshots = []
-    if turn.core is not None:
-        friendly_snapshots.append(
-            EntitySnapshot(
-                _uuid_key(turn.core.id),
-                EntityKind.CORE,
-                tuple(turn.core.position),
-                max(0, int(turn.core.hp)),
-                max(0, int(getattr(turn.core, "shield", 0))),
-            )
-        )
-    for unit in getattr(turn, "units", ()):
-        unit_type = _enum_name(getattr(unit, "unit_type", None))
-        if unit_type not in {"WORKER", "VANGUARD", "RANGER"}:
-            continue
-        friendly_snapshots.append(
-            EntitySnapshot(
-                _uuid_key(unit.id),
-                EntityKind(unit_type),
-                tuple(unit.position),
-                max(0, int(unit.hp)),
-            )
-        )
-    visible_cells = compute_visible_cells(friendly_snapshots, _obstacles_for(turn, memory))
+    visible_cells = memory.current_visible_cells
     invalidated_resources = {
         tuple(getattr(event, "position"))
         for event in getattr(turn, "events", ()) or ()

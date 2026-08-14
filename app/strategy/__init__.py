@@ -11,7 +11,13 @@ from .exploration import (
     bit_index,
     chunk_key,
 )
-from .models import CellRisk, EntityKind, EntitySnapshot, Position
+from .models import (
+    CellRisk,
+    EntityKind,
+    EntitySnapshot,
+    Position,
+    entity_snapshot_from_view,
+)
 from .movement import (
     MoveCandidate,
     MoveIntent,
@@ -56,6 +62,7 @@ __all__ = [
     "compute_capacity_projection",
     "compute_visible_cells",
     "chunk_key",
+    "entity_snapshot_from_view",
     "plan_turn",
     "resolve_movement",
     "risk_at",

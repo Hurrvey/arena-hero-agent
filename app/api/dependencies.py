@@ -9,6 +9,7 @@ from app.runtime.models import RuntimeSnapshot, RuntimeStatus
 from app.storage import (
     AdaptiveRepository,
     Database,
+    ExplorationRepository,
     MetricsRepository,
     RuntimeStore,
     StrategyRepository,
@@ -40,6 +41,7 @@ class Services:
     strategies: StrategyRepository
     metrics: MetricsRepository
     adaptive: AdaptiveRepository
+    exploration: ExplorationRepository
     runtime_manager: object
     broadcaster: object
     session_id: str | None = None
