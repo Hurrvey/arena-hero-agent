@@ -14,6 +14,7 @@ from app.storage import AdaptiveRepository, MetricsRepository, RuntimeStore, Str
 from app.strategy.planner_adapter import plan_turn
 
 from .agent_runtime import AgentRuntime
+from .account_lock import account_scope_from_api_key
 from .client import sdk_client_factory
 from .models import RuntimeBatch
 from .runtime_manager import RuntimeManager
@@ -46,6 +47,7 @@ class RuntimeServicesFactory:
         self.broadcaster = broadcaster
         self._lock = RLock()
         self._session_id: str | None = None
+        self._account_scope: str | None = None
         self._mapper: PublicIdMapper | None = None
         self._coordinator = None
 
@@ -53,6 +55,11 @@ class RuntimeServicesFactory:
     def session_id(self) -> str | None:
         with self._lock:
             return self._session_id
+
+    @property
+    def account_scope(self) -> str | None:
+        with self._lock:
+            return self._account_scope
 
     def build(self) -> AgentRuntime:
         load_dotenv(self.settings.dotenv_path)
@@ -63,9 +70,11 @@ class RuntimeServicesFactory:
                 "Arena Hero API key is not configured in the local .env file",
                 503,
             )
-        session = self.runtime_store.create_session(account_hash="configured")
+        account_scope = account_scope_from_api_key(api_key)
+        session = self.runtime_store.create_session(account_hash=account_scope)
         with self._lock:
             self._session_id = session.session_id
+            self._account_scope = account_scope
             self._mapper = PublicIdMapper(session.session_id)
         try:
             coordinator = SqliteAdaptiveCoordinator.from_env(

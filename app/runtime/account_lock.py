@@ -14,6 +14,12 @@ class AccountLockHeld(RuntimeError):
     pass
 
 
+def account_scope_from_api_key(api_key: str) -> str:
+    if not isinstance(api_key, str) or not api_key:
+        raise ValueError("api_key must be a non-empty string")
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
 class AccountLock:
     def __init__(
         self,
@@ -37,7 +43,7 @@ class AccountLock:
         *,
         runtime_id: str,
     ) -> AccountLock:
-        digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        digest = account_scope_from_api_key(api_key)
         return cls(digest, directory, runtime_id=runtime_id)
 
     def acquire(self) -> None:

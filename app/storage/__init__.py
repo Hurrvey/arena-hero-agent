@@ -2,6 +2,7 @@
 
 from .adaptive_repository import AdaptiveRepository
 from .database import Database
+from .exploration_repository import ExplorationRepository
 from .metrics_repository import MetricsRepository
 from .models import AdaptiveWindow, EventPage, RuntimeSession, ServiceEvent, StrategyRevision
 from .retention import RetentionService
@@ -13,6 +14,7 @@ __all__ = [
     "AdaptiveWindow",
     "Database",
     "EventPage",
+    "ExplorationRepository",
     "MetricsRepository",
     "RetentionService",
     "RevisionConflict",

@@ -166,4 +166,30 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON plan_receipts(received_at);
         """,
     ),
+    (
+        4,
+        """
+        CREATE TABLE IF NOT EXISTS exploration_accounts (
+            account_scope TEXT PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS exploration_chunks (
+            account_scope TEXT NOT NULL
+                REFERENCES exploration_accounts(account_scope) ON DELETE CASCADE,
+            chunk_x INTEGER NOT NULL,
+            chunk_y INTEGER NOT NULL,
+            explored_mask BLOB NOT NULL CHECK (length(explored_mask) = 128),
+            obstacle_mask BLOB NOT NULL CHECK (length(obstacle_mask) = 128),
+            last_seen_tick INTEGER NOT NULL CHECK (last_seen_tick >= 0),
+            revision INTEGER NOT NULL CHECK (revision >= 0),
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (account_scope, chunk_x, chunk_y)
+        );
+
+        CREATE INDEX IF NOT EXISTS exploration_chunks_account_revision
+            ON exploration_chunks(account_scope, revision);
+        """,
+    ),
 )

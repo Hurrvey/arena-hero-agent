@@ -27,7 +27,22 @@ def test_migrations_are_idempotent(tmp_path) -> None:
         versions = connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert versions == [(1,), (2,), (3,)]
+    assert versions == [(1,), (2,), (3,), (4,)]
+
+
+def test_exploration_migration_has_fixed_size_masks(tmp_path) -> None:
+    database = Database(tmp_path / "agent.db")
+    database.initialize()
+    database.initialize()
+
+    with database.connect() as connection:
+        chunk_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='exploration_chunks'"
+        ).fetchone()[0]
+
+    assert "length(explored_mask) = 128" in chunk_sql
+    assert "length(obstacle_mask) = 128" in chunk_sql
 
 
 def test_turn_batch_and_service_events_commit_atomically(tmp_path) -> None:
