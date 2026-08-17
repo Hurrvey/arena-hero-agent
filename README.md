@@ -125,7 +125,7 @@ cd D:\arena-hero
 
 地图使用三种明确状态：当前可见区域为明亮网格，曾经探索但当前不可见的区域为深色历史地形，从未探索区域近乎不透明。当前可见资源消失会立即失效；历史区域只保留永久障碍，不保留敌人、资源或 Beacon 归属。Beacon 坐标按官方规则始终公开，但状态和 carrier 在不可见时显示为未知。策略内部的短期资源记忆只参与受规则约束的寻路，不会被前端伪装成当前可见事实。计划的 `ACCEPTED` 表示服务已接收；下一 Turn 到达后，上一 Tick 的私有结果会独立保存为 `RESOLVED`，可在历史页查看，二者不会混为同一状态。
 
-探索历史使用 `SHA-256(API Key)` 派生的本地账号作用域隔离并存入 SQLite，原始 API key 不进入数据库、REST、WebSocket、DOM 或 LLM 提示。`GET /api/v1/exploration?minX=&minY=&maxX=&maxY=` 返回至多 96×96 的 `explored`、`currentVisible`、`obstacle` 位图和单调 `revision`；账号作用域由服务端当前运行配置决定，调用方不能指定。
+探索历史使用 `SHA-256(API Key)` 派生的本地账号作用域隔离并存入 SQLite，原始 API key 不进入数据库、REST、WebSocket、DOM 或 LLM 提示。`GET /api/v1/exploration?minX=&minY=&maxX=&maxY=` 返回至多 96×96 窗口内的 `exploredCells`、`knownObstacleCells` 坐标数组和单调 `revision`；本 Tick 当前可见格由 `/api/v1/state/current` 的 `visibility.currentCells` 提供。账号作用域由服务端当前运行配置决定，调用方不能指定。
 
 总览页的威胁卡同时显示两条互不混淆的状态：`Core` 防御等级表示本体安全，`接敌`等级表示前沿当前可见敌情和响应单位数。地图与诊断不会把历史敌情当作当前事实。
 

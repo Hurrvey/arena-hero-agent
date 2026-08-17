@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.strategy import frontier as frontier_module
 from app.strategy.exploration import ExplorationMap
 from app.strategy.frontier import (
     FrontierMemory,
@@ -78,6 +79,57 @@ def test_two_workers_receive_distinct_low_overlap_frontiers_deterministically() 
 
     assert assignments == repeated
     assert len({item.target for item in assignments.values()}) == 2
+
+
+def test_distant_scouts_scan_only_their_own_bounded_windows(monkeypatch) -> None:
+    exploration = ExplorationMap()
+    exploration.observe(
+        visible_cells=frozenset(
+            {
+                (x, y)
+                for center_x, center_y in ((0, 0), (1000, 1000))
+                for x in range(center_x - 3, center_x + 4)
+                for y in range(center_y - 3, center_y + 4)
+            }
+        ),
+        visible_obstacles=frozenset(),
+        tick=1,
+    )
+    settings = FrontierSettings(search_radius=8, candidate_limit=32)
+    calls: list[tuple[int, int, int, int]] = []
+    real_frontier_cells = frontier_module.frontier_cells
+
+    def bounded_frontier_cells(exploration, **kwargs):
+        calls.append(
+            (
+                kwargs["min_x"],
+                kwargs["min_y"],
+                kwargs["max_x"],
+                kwargs["max_y"],
+            )
+        )
+        return real_frontier_cells(exploration, **kwargs)
+
+    monkeypatch.setattr(frontier_module, "frontier_cells", bounded_frontier_cells)
+
+    assignments = assign_frontiers(
+        FrontierMemory(),
+        (
+            ScoutSnapshot(b"a", (0, 0)),
+            ScoutSnapshot(b"b", (1000, 1000)),
+        ),
+        exploration=exploration,
+        risk_map={},
+        obstacles=frozenset(),
+        occupied=frozenset(),
+        tick=5,
+        settings=settings,
+    )
+
+    assert set(assignments) == {b"a", b"b"}
+    assert len(calls) == 2
+    assert all(max_x - min_x <= 16 for min_x, _min_y, max_x, _max_y in calls)
+    assert all(max_y - min_y <= 16 for _min_x, min_y, _max_x, max_y in calls)
 
 
 def test_existing_lease_stays_until_completed_invalid_or_stalled() -> None:
@@ -191,6 +243,45 @@ def test_duplicate_tick_observation_is_idempotent() -> None:
     )
 
     assert tuple(memory.histories[b"a"]) == ((0, 0),)
+
+
+def test_inactive_scout_state_is_pruned_even_when_no_scouts_remain() -> None:
+    memory = FrontierMemory()
+    settings = FrontierSettings()
+    memory.ensure_lease(
+        b"dead",
+        target=(3, 0),
+        distance=3,
+        explored_count=1,
+        tick=1,
+    )
+    record_scout_observation(
+        memory,
+        b"dead",
+        (0, 0),
+        explored_count=1,
+        tick=1,
+        settings=settings,
+    )
+    memory.taboo_edges[(b"dead", (0, 0), (1, 0))] = 99
+    memory.failed_targets[(b"dead", (3, 0))] = 99
+
+    assert assign_frontiers(
+        memory,
+        (),
+        exploration=ExplorationMap(),
+        risk_map={},
+        obstacles=frozenset(),
+        occupied=frozenset(),
+        tick=2,
+        settings=settings,
+    ) == {}
+
+    assert memory.leases == {}
+    assert memory.histories == {}
+    assert memory.observed_ticks == {}
+    assert memory.taboo_edges == {}
+    assert memory.failed_targets == {}
 
 
 @pytest.mark.parametrize(

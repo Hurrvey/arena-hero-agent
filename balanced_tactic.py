@@ -2708,11 +2708,11 @@ def _queue_worker_actions(
         enemy_snapshots,
         obstacles,
     )
-    if scout_snapshots:
-        min_x = min(scout.position[0] for scout in scout_snapshots) - frontier_settings.search_radius
-        min_y = min(scout.position[1] for scout in scout_snapshots) - frontier_settings.search_radius
-        max_x = max(scout.position[0] for scout in scout_snapshots) + frontier_settings.search_radius
-        max_y = max(scout.position[1] for scout in scout_snapshots) + frontier_settings.search_radius
+    for scout in scout_snapshots:
+        min_x = scout.position[0] - frontier_settings.search_radius
+        min_y = scout.position[1] - frontier_settings.search_radius
+        max_x = scout.position[0] + frontier_settings.search_radius
+        max_y = scout.position[1] + frontier_settings.search_radius
         explored_count = len(
             memory.exploration.window(
                 min_x=min_x,
@@ -2721,9 +2721,6 @@ def _queue_worker_actions(
                 max_y=max_y,
             ).explored_cells
         )
-    else:
-        explored_count = 0
-    for scout in scout_snapshots:
         record_scout_observation(
             memory.frontier,
             scout.entity_id,
@@ -3963,11 +3960,26 @@ def play(api_key: str | None = None, adaptive=None) -> None:
                         None,
                     )
                     if callable(diagnostic_observer):
+                        diagnostics = {
+                            **dict(_planner_result.diagnostics.economy),
+                            "defense_level": _planner_result.diagnostics.defense.get(
+                                "level",
+                                "CLEAR",
+                            ),
+                            "incoming_core_damage": _planner_result.diagnostics.defense.get(
+                                "incoming_damage",
+                                0,
+                            ),
+                            "exploration": dict(
+                                _planner_result.diagnostics.exploration
+                            ),
+                            "contact": dict(_planner_result.diagnostics.contact),
+                        }
                         diagnostic_observer(
                             turn,
                             accepted,
                             profile,
-                            memory.economy_diagnostics,
+                            diagnostics,
                         )
                     elif callable(
                         snapshot_observer := getattr(

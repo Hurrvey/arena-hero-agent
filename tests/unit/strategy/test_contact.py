@@ -91,6 +91,22 @@ def test_worker_evasion_prefers_fewer_attacks_then_more_enemy_distance() -> None
     assert destination == (9, 0)
 
 
+def test_worker_evasion_escapes_a_one_step_ranger_threat() -> None:
+    worker = entity(b"worker", EntityKind.WORKER, (0, 0))
+    enemy = entity(b"enemy", EntityKind.RANGER, (0, 4), controlled=False)
+
+    destination = choose_worker_evasion(
+        worker,
+        visible_enemies=(enemy,),
+        obstacles=frozenset(),
+        occupied=frozenset(),
+        reserved=frozenset(),
+        core_position=(10, 10),
+    )
+
+    assert destination in {(-1, 0), (1, 0)}
+
+
 def test_ranger_is_responder_and_one_vanguard_remains_guard() -> None:
     ranger = entity(b"ranger", EntityKind.RANGER, (0, 3))
     guard = entity(b"guard", EntityKind.VANGUARD, (1, 0), hp=4)
@@ -108,6 +124,25 @@ def test_ranger_is_responder_and_one_vanguard_remains_guard() -> None:
 
     assert responder is not None
     assert responder.entity_id == b"ranger"
+
+
+def test_sole_selected_vanguard_guard_never_becomes_responder() -> None:
+    guard = entity(b"guard", EntityKind.VANGUARD, (1, 0), hp=4)
+    remote = entity(b"remote", EntityKind.VANGUARD, (20, 0), hp=4)
+    enemy = entity(b"enemy", EntityKind.RANGER, (4, 0), controlled=False)
+
+    responder = select_responder(
+        (guard, remote),
+        enemy=enemy,
+        contact_level=ContactLevel.THREATENING,
+        core_position=(0, 0),
+        defender_ids=frozenset({b"guard"}),
+        core_defense_level="CLEAR",
+        obstacles=frozenset(),
+    )
+
+    assert responder is not None
+    assert responder.entity_id == b"remote"
 
 
 def test_ranger_intercept_goal_creates_a_legal_clear_shot_cell() -> None:

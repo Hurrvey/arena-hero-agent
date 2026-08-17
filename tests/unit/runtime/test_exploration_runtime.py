@@ -145,3 +145,34 @@ def test_successful_revision_never_regresses_after_a_later_write_failure() -> No
 
     assert second.base_revision == 3
     assert runtime.persist(second) == 3
+
+
+def test_failed_exploration_delta_is_retried_with_the_next_persist() -> None:
+    class FailsOnceRepository(Repository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts = 0
+
+        def merge_delta(self, account_scope, delta):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise OSError("temporary")
+            self.saved.append((account_scope, delta))
+            return 4
+
+    repository = FailsOnceRepository()
+    runtime = ExplorationRuntime(repository, "scope")
+    tactic_memory = memory()
+    first = runtime.observe_turn(turn(), tactic_memory)
+    assert first.delta.chunks
+    assert runtime.persist(first) == 0
+
+    next_turn = turn()
+    next_turn.tick = 11
+    second = runtime.observe_turn(next_turn, tactic_memory)
+    assert second.delta.chunks == ()
+
+    assert runtime.persist(second) == 4
+    assert repository.attempts == 2
+    assert repository.saved[0][1].chunks == first.delta.chunks
+    assert repository.saved[0][1].tick == 11

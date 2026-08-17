@@ -7,7 +7,12 @@ import sqlite3
 from dataclasses import dataclass
 
 from app.storage import ExplorationRepository
-from app.strategy.exploration import ChunkKey, ExplorationDelta, chunk_key
+from app.strategy.exploration import (
+    ChunkKey,
+    ExplorationChunk,
+    ExplorationDelta,
+    chunk_key,
+)
 from app.strategy.models import Position, entity_snapshot_from_view
 from app.strategy.visibility import compute_visible_cells
 
@@ -49,6 +54,7 @@ class ExplorationRuntime:
         self._max_loaded_chunks = max_loaded_chunks
         self._load_radius = load_radius
         self._last_revision = 0
+        self._pending_delta: ExplorationDelta | None = None
 
     def observe_turn(self, turn: object, memory: object) -> ExplorationObservation:
         tick = int(getattr(turn, "tick", 0))
@@ -110,14 +116,17 @@ class ExplorationRuntime:
         )
 
     def persist(self, observation: ExplorationObservation) -> int:
+        delta = _merge_deltas(self._pending_delta, observation.delta)
         try:
             revision = self._repository.merge_delta(
                 self._account_scope,
-                observation.delta,
+                delta,
             )
+            self._pending_delta = None
             self._last_revision = max(self._last_revision, revision)
             return self._last_revision
         except (sqlite3.Error, OSError, ValueError):
+            self._pending_delta = delta
             logger.warning("exploration persistence degraded")
             return max(observation.base_revision, self._last_revision)
 
@@ -161,3 +170,45 @@ class ExplorationRuntime:
             return distance, key.x, key.y
 
         return tuple(sorted(candidates - set(loaded), key=rank)[:_MAX_LOAD_KEYS])
+
+
+def _merge_deltas(
+    pending: ExplorationDelta | None,
+    current: ExplorationDelta,
+) -> ExplorationDelta:
+    if pending is None:
+        return current
+    chunks: dict[ChunkKey, ExplorationChunk] = {
+        chunk.key: chunk for chunk in pending.chunks
+    }
+    for incoming in current.chunks:
+        prior = chunks.get(incoming.key)
+        if prior is None:
+            chunks[incoming.key] = incoming
+            continue
+        chunks[incoming.key] = ExplorationChunk(
+            key=incoming.key,
+            explored_mask=bytes(
+                left | right
+                for left, right in zip(
+                    prior.explored_mask,
+                    incoming.explored_mask,
+                    strict=True,
+                )
+            ),
+            obstacle_mask=bytes(
+                left | right
+                for left, right in zip(
+                    prior.obstacle_mask,
+                    incoming.obstacle_mask,
+                    strict=True,
+                )
+            ),
+            last_seen_tick=max(prior.last_seen_tick, incoming.last_seen_tick),
+            revision=max(prior.revision, incoming.revision),
+        )
+    return ExplorationDelta(
+        tick=max(pending.tick, current.tick),
+        chunks=tuple(chunks[key] for key in sorted(chunks)),
+        touched_keys=tuple(sorted(set(pending.touched_keys) | set(current.touched_keys))),
+    )

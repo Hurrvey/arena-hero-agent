@@ -149,7 +149,7 @@ def choose_worker_evasion(
     if worker.kind is not EntityKind.WORKER:
         raise ValueError("worker must be a Worker snapshot")
     risk_map = risk_map or {}
-    origin_attacks = _risk_count(
+    origin_threat = _evasion_threat(
         risk_map.get(worker.position),
         visible_enemies,
         worker.position,
@@ -165,13 +165,13 @@ def choose_worker_evasion(
             or destination == core_position
         ):
             continue
-        attacks = _risk_count(
+        threat = _evasion_threat(
             risk_map.get(destination),
             visible_enemies,
             destination,
             obstacles,
         )
-        if attacks >= origin_attacks:
+        if threat >= origin_threat:
             continue
         nearest_enemy = min(
             (_manhattan(destination, enemy.position) for enemy in visible_enemies),
@@ -183,7 +183,16 @@ def choose_worker_evasion(
             - _manhattan(worker.position, core_position),
         )
         candidates.append(
-            ((attacks, -nearest_enemy, distance_penalty, order), destination)
+            (
+                (
+                    threat[0],
+                    threat[1],
+                    -nearest_enemy,
+                    distance_penalty,
+                    order,
+                ),
+                destination,
+            )
         )
     if not candidates:
         return None
@@ -224,13 +233,17 @@ def select_responder(
             for unit in eligible
             if unit.kind is EntityKind.RANGER and unit.entity_id not in defender_ids
         ]
-    vanguard_count = sum(unit.kind is EntityKind.VANGUARD for unit in eligible)
+    defending_vanguard_ids = {
+        unit.entity_id
+        for unit in eligible
+        if unit.kind is EntityKind.VANGUARD and unit.entity_id in defender_ids
+    }
     eligible = [
         unit
         for unit in eligible
         if unit.kind is EntityKind.RANGER
-        or vanguard_count >= 2
         or unit.entity_id not in defender_ids
+        or len(defending_vanguard_ids) >= 2
     ]
     if not eligible:
         return None
@@ -497,6 +510,21 @@ def _risk_count(
         for enemy in enemies
         if not enemy.controlled and enemy.hp > 0
     )
+
+
+def _evasion_threat(
+    risk: CellRisk | None,
+    enemies: Sequence[EntitySnapshot],
+    position: Position,
+    obstacles: frozenset[Position],
+) -> tuple[int, int]:
+    current_attacks = _risk_count(risk, enemies, position, obstacles)
+    next_step_attacks = sum(
+        _can_attack_after_one_step(enemy, position, obstacles)
+        for enemy in enemies
+        if not enemy.controlled and enemy.hp > 0
+    )
+    return current_attacks, next_step_attacks
 
 
 def _manhattan(left: Position, right: Position) -> int:

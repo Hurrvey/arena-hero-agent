@@ -1372,7 +1372,7 @@ def test_play_uses_the_turn_profile_snapshot_for_adaptive_observation(monkeypatc
     assert capsys.readouterr().out == "tick=9 accepted=True\n"
 
 
-def test_play_passes_only_aggregate_economy_diagnostics_when_supported(
+def test_play_passes_aggregate_economy_defense_exploration_and_contact_diagnostics(
     monkeypatch, capsys
 ) -> None:
     observed = []
@@ -1418,6 +1418,15 @@ def test_play_passes_only_aggregate_economy_diagnostics_when_supported(
             "oscillation_ticks": 0,
             "runner_progress_ticks": 0,
         }
+        memory.exploration_diagnostics = {
+            "newly_explored_cells": 4,
+            "frontier_assignments": 2,
+        }
+        memory.contact_diagnostics = {
+            "level": "THREATENING",
+            "visible_enemy_count": 1,
+            "responding_combat_units": 1,
+        }
 
     monkeypatch.setattr("balanced_tactic.ArenaHeroClient", FakeGame)
     monkeypatch.setattr("balanced_tactic.choose_actions", fake_choose_actions)
@@ -1431,6 +1440,17 @@ def test_play_passes_only_aggregate_economy_diagnostics_when_supported(
         "route_stalls": 0,
         "oscillation_ticks": 0,
         "runner_progress_ticks": 0,
+        "defense_level": "CLEAR",
+        "incoming_core_damage": 0,
+        "exploration": {
+            "newly_explored_cells": 4,
+            "frontier_assignments": 2,
+        },
+        "contact": {
+            "level": "THREATENING",
+            "visible_enemy_count": 1,
+            "responding_combat_units": 1,
+        },
     }]
     assert capsys.readouterr().out == "tick=10 accepted=True\n"
 
@@ -3270,6 +3290,67 @@ def test_idle_workers_move_to_distinct_real_frontiers_not_radial_fallbacks() -> 
     assert memory.planned_reason_codes[first.id] == "SCOUT_FRONTIER"
     assert memory.planned_reason_codes[second.id] == "SCOUT_FRONTIER"
     assert memory.planned_reason_targets[first.id] != memory.planned_reason_targets[second.id]
+
+
+def test_live_frontier_progress_never_scans_between_distant_workers(monkeypatch) -> None:
+    core = FakeController(
+        object_id=UUID(int=100),
+        position=(500, 500),
+        hp=5,
+        shield=10,
+    )
+    first = FakeController(
+        object_id=UUID(int=1),
+        position=(0, 0),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    second = FakeController(
+        object_id=UUID(int=2),
+        position=(1000, 1000),
+        hp=2,
+        unit_type=UnitType.WORKER,
+    )
+    turn = make_turn(
+        core=core,
+        units=(first, second),
+        resources=0,
+        beacon=SimpleNamespace(
+            position=(500, 500),
+            status="CARRIED",
+            carrier_id=core.id,
+        ),
+    )
+    memory = TacticMemory()
+    memory.exploration.observe(
+        visible_cells=frozenset(
+            {
+                (x, y)
+                for center_x, center_y in ((0, 0), (1000, 1000))
+                for x in range(center_x - 3, center_x + 4)
+                for y in range(center_y - 3, center_y + 4)
+            }
+        ),
+        visible_obstacles=frozenset(),
+        tick=turn.tick,
+    )
+    memory.exploration_observed_tick = turn.tick
+    real_window = type(memory.exploration).window
+
+    def bounded_window(exploration, *, min_x, min_y, max_x, max_y):
+        assert max_x - min_x <= 80
+        assert max_y - min_y <= 80
+        return real_window(
+            exploration,
+            min_x=min_x,
+            min_y=min_y,
+            max_x=max_x,
+            max_y=max_y,
+        )
+
+    monkeypatch.setattr(type(memory.exploration), "window", bounded_window)
+
+    choose_actions(turn, memory)
 
 
 def test_worker_does_not_repeat_a_b_a_after_oscillation_is_observed() -> None:

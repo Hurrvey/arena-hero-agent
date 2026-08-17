@@ -199,36 +199,43 @@ def assign_frontiers(
     ordered = tuple(sorted(scouts, key=lambda item: item.entity_id))
     if len({scout.entity_id for scout in ordered}) != len(ordered):
         raise ValueError("scout identifiers must be unique")
+    active_ids = {scout.entity_id for scout in ordered}
+    _prune_inactive_scouts(memory, active_ids)
     if not ordered:
         return {}
     _prune_cooldowns(memory, tick)
 
-    min_x = min(scout.position[0] for scout in ordered) - settings.search_radius
-    min_y = min(scout.position[1] for scout in ordered) - settings.search_radius
-    max_x = max(scout.position[0] for scout in ordered) + settings.search_radius
-    max_y = max(scout.position[1] for scout in ordered) + settings.search_radius
-    candidates = frontier_cells(
-        exploration,
-        min_x=min_x,
-        min_y=min_y,
-        max_x=max_x,
-        max_y=max_y,
-        obstacles=obstacles,
-        limit=settings.candidate_limit,
-    )
-    candidate_set = set(candidates)
-    explored_count = _explored_count(
-        exploration,
-        min_x=min_x,
-        min_y=min_y,
-        max_x=max_x,
-        max_y=max_y,
-    )
+    candidates_by_scout: dict[bytes, tuple[Position, ...]] = {}
+    explored_count_by_scout: dict[bytes, int] = {}
+    for scout in ordered:
+        min_x = scout.position[0] - settings.search_radius
+        min_y = scout.position[1] - settings.search_radius
+        max_x = scout.position[0] + settings.search_radius
+        max_y = scout.position[1] + settings.search_radius
+        candidates_by_scout[scout.entity_id] = frontier_cells(
+            exploration,
+            min_x=min_x,
+            min_y=min_y,
+            max_x=max_x,
+            max_y=max_y,
+            obstacles=obstacles,
+            limit=settings.candidate_limit,
+        )
+        explored_count_by_scout[scout.entity_id] = _explored_count(
+            exploration,
+            min_x=min_x,
+            min_y=min_y,
+            max_x=max_x,
+            max_y=max_y,
+        )
     assignments: dict[bytes, FrontierAssignment] = {}
     claimed_targets: set[Position] = set()
     claimed_unknown: set[Position] = set()
 
     for scout in ordered:
+        candidates = candidates_by_scout[scout.entity_id]
+        candidate_set = set(candidates)
+        explored_count = explored_count_by_scout[scout.entity_id]
         lease = memory.leases.get(scout.entity_id)
         had_failure = any(key[0] == scout.entity_id for key in memory.failed_targets)
         kept_path: tuple[Position, ...] | None = None
@@ -344,10 +351,6 @@ def assign_frontiers(
         claimed_targets.add(target)
         claimed_unknown.update(gain_cells)
 
-    living_ids = {scout.entity_id for scout in ordered}
-    for unit_id in tuple(memory.leases):
-        if unit_id not in living_ids:
-            memory.leases.pop(unit_id, None)
     return assignments
 
 
@@ -575,6 +578,37 @@ def _prune_cooldowns(memory: FrontierMemory, tick: int) -> None:
     }
     memory.failed_targets = {
         key: expiry for key, expiry in memory.failed_targets.items() if expiry > tick
+    }
+
+
+def _prune_inactive_scouts(
+    memory: FrontierMemory,
+    active_ids: set[bytes],
+) -> None:
+    memory.leases = {
+        unit_id: lease
+        for unit_id, lease in memory.leases.items()
+        if unit_id in active_ids
+    }
+    memory.histories = {
+        unit_id: history
+        for unit_id, history in memory.histories.items()
+        if unit_id in active_ids
+    }
+    memory.observed_ticks = {
+        unit_id: tick
+        for unit_id, tick in memory.observed_ticks.items()
+        if unit_id in active_ids
+    }
+    memory.taboo_edges = {
+        key: expiry
+        for key, expiry in memory.taboo_edges.items()
+        if key[0] in active_ids
+    }
+    memory.failed_targets = {
+        key: expiry
+        for key, expiry in memory.failed_targets.items()
+        if key[0] in active_ids
     }
 
 
